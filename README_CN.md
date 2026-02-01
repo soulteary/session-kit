@@ -1,5 +1,10 @@
 # session-kit
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/session-kit.svg)](https://pkg.go.dev/github.com/soulteary/session-kit)
+[![Go Report Card](https://goreportcard.com/badge/github.com/soulteary/session-kit)](https://goreportcard.com/report/github.com/soulteary/session-kit)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/soulteary/session-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/session-kit)
+
 Go 语言会话管理库，支持内存和 Redis 存储后端，兼容 Fiber v2 会话中间件。
 
 ## 功能特性
