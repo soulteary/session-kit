@@ -5,6 +5,8 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/session-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/session-kit)
 
+[中文文档](README_CN.md)
+
 A Go library for session management with support for memory and Redis storage backends. Compatible with Fiber v2's session middleware.
 
 ## Features

@@ -5,6 +5,8 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/session-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/session-kit)
 
+[English](README.md)
+
 Go 语言会话管理库，支持内存和 Redis 存储后端，兼容 Fiber v2 会话中间件。
 
 ## 功能特性
