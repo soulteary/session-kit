@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,39 @@ import (
 	"github.com/gofiber/fiber/v2"
 	fibersession "github.com/gofiber/fiber/v2/middleware/session"
 )
+
+// failingStorage implements Storage and returns configurable errors for testing.
+type failingStorage struct {
+	setErr  error
+	getErr  error
+	Storage Storage
+}
+
+func (f *failingStorage) Get(key string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.Storage.Get(key)
+}
+
+func (f *failingStorage) Set(key string, val []byte, exp time.Duration) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	return f.Storage.Set(key, val, exp)
+}
+
+func (f *failingStorage) Delete(key string) error {
+	return f.Storage.Delete(key)
+}
+
+func (f *failingStorage) Reset() error {
+	return f.Storage.Reset()
+}
+
+func (f *failingStorage) Close() error {
+	return f.Storage.Close()
+}
 
 func TestManagerCreateSession(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
@@ -659,5 +693,40 @@ func TestUnauthenticateNilSession(t *testing.T) {
 	err := Unauthenticate(nil)
 	if err != nil {
 		t.Errorf("expected no error for nil session, got %v", err)
+	}
+}
+
+func TestManagerSaveSessionStorageError(t *testing.T) {
+	base := NewMemoryStorage("test:", 0)
+	defer func() { _ = base.Close() }()
+
+	storage := &failingStorage{
+		Storage: base,
+		setErr:  errors.New("storage set failed"),
+	}
+	config := DefaultConfig()
+	manager := NewManager(storage, config)
+
+	session := manager.CreateSession("session-123")
+	err := manager.SaveSession(session)
+	if err == nil {
+		t.Error("expected error when storage.Set fails")
+	}
+}
+
+func TestManagerLoadSessionStorageGetError(t *testing.T) {
+	base := NewMemoryStorage("test:", 0)
+	defer func() { _ = base.Close() }()
+
+	storage := &failingStorage{
+		Storage: base,
+		getErr:  errors.New("storage get failed"),
+	}
+	config := DefaultConfig()
+	manager := NewManager(storage, config)
+
+	_, err := manager.LoadSession("any-id")
+	if err == nil {
+		t.Error("expected error when storage.Get fails")
 	}
 }
