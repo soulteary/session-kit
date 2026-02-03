@@ -2,6 +2,8 @@
 package session
 
 import (
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -33,7 +35,7 @@ type Config struct {
 	HTTPOnly bool
 
 	// SameSite controls the SameSite attribute of the cookie.
-	// Allowed values: "Strict", "Lax", "None"
+	// Allowed values: "Strict", "Lax", "None", "Disabled"
 	// Default: "Lax"
 	SameSite string
 
@@ -93,7 +95,7 @@ func (c Config) WithHTTPOnly(httpOnly bool) Config {
 }
 
 // WithSameSite sets the SameSite attribute of the cookie.
-// Allowed values: "Strict", "Lax", "None"
+// Allowed values: "Strict", "Lax", "None", "Disabled"
 func (c Config) WithSameSite(sameSite string) Config {
 	c.SameSite = sameSite
 	return c
@@ -111,5 +113,42 @@ func (c Config) WithKeyPrefix(prefix string) Config {
 func (c Config) Validate() error {
 	// This is a validation-only method, not a mutation method.
 	// All defaults are handled by DefaultConfig() and builder methods.
+	if c.CookieName == "" {
+		return fmt.Errorf("cookie name cannot be empty")
+	}
+	if c.CookiePath == "" {
+		return fmt.Errorf("cookie path cannot be empty")
+	}
+	if c.Expiration < 0 {
+		return fmt.Errorf("expiration must be >= 0")
+	}
+
+	normalized := normalizeSameSite(c.SameSite)
+	switch normalized {
+	case "Strict", "Lax", "None", "Disabled", "":
+		// allow empty value to fall back to default behavior
+	default:
+		return fmt.Errorf("invalid same-site value: %s", c.SameSite)
+	}
+
+	if normalized == "None" && !c.Secure {
+		return fmt.Errorf("same-site None requires Secure=true")
+	}
+
 	return nil
+}
+
+func normalizeSameSite(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "strict":
+		return "Strict"
+	case "lax":
+		return "Lax"
+	case "none":
+		return "None"
+	case "disabled":
+		return "Disabled"
+	default:
+		return value
+	}
 }

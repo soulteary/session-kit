@@ -162,6 +162,13 @@ cfg := session.DefaultConfig().
     WithKeyPrefix("myapp:session:")   // 存储键前缀
 ```
 
+### 安全建议
+
+- **配置校验**：使用前调用 `cfg.Validate()`，避免无效或不安全的组合（例如 `SameSite=None` 但未开启 `Secure=true`）。
+- **SameSite 行为**：支持 `Strict`、`Lax`、`None`、`Disabled`。只有在必须跨站请求时使用 `None`，且务必启用 `Secure=true`。
+- **登录加固**：认证成功后应轮换（重新生成）会话 ID，以防止会话固定攻击。
+- **Redis 加固**：将 Redis 视为可信后端，使用网络隔离与访问控制，并在客户端设置超时避免资源耗尽。
+
 ### 存储配置
 
 ```go
