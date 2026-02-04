@@ -72,14 +72,15 @@ func TestConfigWithMethods(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
+	if err := (Config{}).Validate(); err != nil {
+		t.Errorf("expected no error with zero config, got %v", err)
+	}
 	if err := DefaultConfig().Validate(); err != nil {
 		t.Errorf("expected no error with default config, got %v", err)
 	}
 
-	invalidConfig := DefaultConfig().
-		WithCookieName("").
-		WithCookiePath("")
+	invalidConfig := DefaultConfig().WithCookieName("")
 	if err := invalidConfig.Validate(); err == nil {
-		t.Error("expected error for empty cookie name and path, got nil")
+		t.Error("expected error for empty cookie name, got nil")
 	}
 }
