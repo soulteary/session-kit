@@ -730,3 +730,52 @@ func TestManagerLoadSessionStorageGetError(t *testing.T) {
 		t.Error("expected error when storage.Get fails")
 	}
 }
+
+func TestManagerSaveSessionMarshalError(t *testing.T) {
+	storage := NewMemoryStorage("test:", 0)
+	defer func() { _ = storage.Close() }()
+
+	config := DefaultConfig()
+	manager := NewManager(storage, config)
+
+	// SessionData with Data that cannot be marshaled (channel is not JSON-serializable)
+	session := manager.CreateSession("session-123")
+	session.Data = map[string]interface{}{"bad": make(chan int)}
+
+	err := manager.SaveSession(session)
+	if err == nil {
+		t.Error("expected error when session cannot be marshaled")
+	}
+}
+
+func TestCreateCookieSameSiteNoneForcesSecure(t *testing.T) {
+	// When SameSite is None, cookie Secure must be true (browser requirement)
+	config := DefaultConfig().
+		WithCookieName("s").
+		WithSameSite("None").
+		WithSecure(false) // explicitly false
+
+	cookie := CreateCookie(config, "sid")
+	if !cookie.Secure {
+		t.Error("expected Cookie Secure to be true when SameSite is None")
+	}
+	if cookie.SameSite != "none" {
+		t.Errorf("expected SameSite none, got %s", cookie.SameSite)
+	}
+}
+
+func TestFiberSessionConfigSameSiteNoneForcesSecure(t *testing.T) {
+	storage := NewMemoryStorage("test:", 0)
+	defer func() { _ = storage.Close() }()
+
+	config := DefaultConfig().
+		WithSameSite("None").
+		WithSecure(false)
+
+	manager := NewManager(storage, config)
+	fiberCfg := manager.FiberSessionConfig()
+
+	if !fiberCfg.CookieSecure {
+		t.Error("expected CookieSecure to be true when SameSite is None")
+	}
+}

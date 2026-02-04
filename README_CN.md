@@ -102,6 +102,8 @@ func main() {
 package main
 
 import (
+    "time"
+
     "github.com/gofiber/fiber/v2"
     fibersession "github.com/gofiber/fiber/v2/middleware/session"
     session "github.com/soulteary/session-kit"
@@ -249,6 +251,44 @@ session.HasScope(sess, "read")
 session.UpdateLastAccess(sess)
 session.GetLastAccess(sess)
 session.GetCreatedAt(sess)
+```
+
+### 会话共享（跨域）
+
+若需将会话 ID 共享给其他域（如子域或合作方应用），可使用 `session.CreateCookie(config, sessionID)` 生成 Cookie 并写入响应。当 `SameSite` 为 `None` 时，库会强制将 Cookie 设为 `Secure` 以满足浏览器要求。
+
+## 服务端 KV 会话（Store）
+
+需要通用键值会话存储的服务（如服务端 challenge/会话记录）可使用 `Store` 接口与 `KVManager`：
+
+- **Store**：提供带 TTL 的 `Create`、`Get`、`Set`、`Delete`、`Exists`。
+- **KVManager**：封装 `Store`，提供默认 TTL 及 `Refresh`。
+- **RedisStore**：Redis 实现，使用 `NewRedisStore(client, keyPrefix)`。
+
+```go
+// redisClient 为 *redis.Client；需引入 "context" 与 "time"。
+ctx := context.Background()
+store := session.NewRedisStore(redisClient, "myapp:session:")
+mgr := session.NewKVManager(store, 10*time.Minute)
+
+id, _ := mgr.Create(ctx, map[string]interface{}{"user_id": "u1"}, 0)
+rec, _ := mgr.Get(ctx, id)
+_ = mgr.Set(ctx, id, map[string]interface{}{"user_id": "u1", "step": 2}, 0)
+_ = mgr.Refresh(ctx, id, 0)
+_ = mgr.Delete(ctx, id)
+```
+
+## 工厂方法
+
+- **NewStorageFromEnv(redisEnabled, redisAddr, redisPassword, redisDB, keyPrefix)** — 按“是否启用 Redis + 连接参数”创建 Storage（`redisEnabled` 为 false 时使用内存）。
+- **MustNewStorage(cfg)** — 与 `NewStorage(cfg)` 相同，但出错时 panic，适用于 `main()` 初始化。
+
+## 测试
+
+```bash
+go test ./...
+go test -coverprofile=coverage.out -covermode=atomic ./...
+go tool cover -html=coverage.out
 ```
 
 ## 许可证

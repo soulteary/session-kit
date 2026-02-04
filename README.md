@@ -102,6 +102,8 @@ func main() {
 package main
 
 import (
+    "time"
+
     "github.com/gofiber/fiber/v2"
     fibersession "github.com/gofiber/fiber/v2/middleware/session"
     session "github.com/soulteary/session-kit"
@@ -249,6 +251,44 @@ session.HasScope(sess, "read")
 session.UpdateLastAccess(sess)
 session.GetLastAccess(sess)
 session.GetCreatedAt(sess)
+```
+
+### Session sharing (cross-domain)
+
+To share a session ID with another domain (e.g. subdomain or partner app), create a cookie with `session.CreateCookie(config, sessionID)` and set it on the response. When `SameSite` is `None`, the library forces the cookie to be `Secure` for browser compliance.
+
+## Server-side KV sessions (Store)
+
+For services that need a generic key-value session store (e.g. server-side challenge/session records), use the `Store` interface and `KVManager`:
+
+- **Store**: `Create`, `Get`, `Set`, `Delete`, `Exists` with TTL.
+- **KVManager**: Wraps a `Store` and provides default TTL plus `Refresh`.
+- **RedisStore**: Redis implementation of `Store`; use `NewRedisStore(client, keyPrefix)`.
+
+```go
+// redisClient is *redis.Client; require "context" and "time" imports.
+ctx := context.Background()
+store := session.NewRedisStore(redisClient, "myapp:session:")
+mgr := session.NewKVManager(store, 10*time.Minute)
+
+id, _ := mgr.Create(ctx, map[string]interface{}{"user_id": "u1"}, 0)
+rec, _ := mgr.Get(ctx, id)
+_ = mgr.Set(ctx, id, map[string]interface{}{"user_id": "u1", "step": 2}, 0)
+_ = mgr.Refresh(ctx, id, 0)
+_ = mgr.Delete(ctx, id)
+```
+
+## Factory helpers
+
+- **NewStorageFromEnv(redisEnabled, redisAddr, redisPassword, redisDB, keyPrefix)** — build Storage from env-like flags (memory if `redisEnabled` is false).
+- **MustNewStorage(cfg)** — same as `NewStorage(cfg)` but panics on error (e.g. in `main()`).
+
+## Testing
+
+```bash
+go test ./...
+go test -coverprofile=coverage.out -covermode=atomic ./...
+go tool cover -html=coverage.out
 ```
 
 ## License

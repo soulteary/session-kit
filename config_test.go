@@ -83,4 +83,34 @@ func TestConfigValidate(t *testing.T) {
 	if err := invalidConfig.Validate(); err == nil {
 		t.Error("expected error for empty cookie name, got nil")
 	}
+
+	// Empty cookie path
+	invalidPath := DefaultConfig().WithCookiePath("")
+	if err := invalidPath.Validate(); err == nil {
+		t.Error("expected error for empty cookie path, got nil")
+	}
+
+	// Negative expiration
+	invalidExp := Config{CookieName: "s", CookiePath: "/", Expiration: -1 * time.Hour}
+	if err := invalidExp.Validate(); err == nil {
+		t.Error("expected error for negative expiration, got nil")
+	}
+
+	// Invalid same-site value (normalizeSameSite default branch)
+	invalidSameSite := DefaultConfig().WithSameSite("Invalid")
+	if err := invalidSameSite.Validate(); err == nil {
+		t.Error("expected error for invalid same-site, got nil")
+	}
+
+	// SameSite None requires Secure=true
+	noneInsecure := DefaultConfig().WithSameSite("None").WithSecure(false)
+	if err := noneInsecure.Validate(); err == nil {
+		t.Error("expected error for SameSite None without Secure, got nil")
+	}
+
+	// Valid SameSite None with Secure
+	noneSecure := DefaultConfig().WithSameSite("None").WithSecure(true)
+	if err := noneSecure.Validate(); err != nil {
+		t.Errorf("expected no error for SameSite None with Secure, got %v", err)
+	}
 }

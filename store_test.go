@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
@@ -295,5 +296,99 @@ func TestRedisStore_GetExpiredRecord(t *testing.T) {
 	}
 	if got != nil {
 		t.Error("expected nil for expired record")
+	}
+}
+
+func TestRedisStore_KeyPrefixWithoutColon(t *testing.T) {
+	mr, client := setupMiniRedis(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	// Prefix without trailing colon: NewRedisStore should append ":"
+	store := NewRedisStore(client, "myprefix")
+	id, err := store.Create(ctx, map[string]interface{}{"a": "b"}, 10*time.Minute)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	rec, err := store.Get(ctx, id)
+	if err != nil || rec == nil || rec.Data["a"] != "b" {
+		t.Errorf("Get after Create: err=%v rec=%v", err, rec)
+	}
+}
+
+func TestRedisStore_EmptyKeyPrefix(t *testing.T) {
+	mr, client := setupMiniRedis(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	store := NewRedisStore(client, "") // empty prefix: key(id) = id
+
+	id, err := store.Create(ctx, map[string]interface{}{"k": "v"}, 10*time.Minute)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if id == "" || id[:5] != "sess_" {
+		t.Errorf("expected sess_ prefix, got %q", id)
+	}
+
+	rec, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec == nil || rec.Data["k"] != "v" {
+		t.Errorf("Get: rec=%v", rec)
+	}
+
+	ok, err := store.Exists(ctx, id)
+	if err != nil || !ok {
+		t.Errorf("Exists: err=%v ok=%v", err, ok)
+	}
+}
+
+// failingStore implements Store and returns configurable errors for testing.
+type failingStore struct {
+	getErr error
+	Store  Store
+}
+
+func (f *failingStore) Create(ctx context.Context, data map[string]interface{}, ttl time.Duration) (string, error) {
+	return f.Store.Create(ctx, data, ttl)
+}
+
+func (f *failingStore) Get(ctx context.Context, id string) (*KVSessionRecord, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.Store.Get(ctx, id)
+}
+
+func (f *failingStore) Set(ctx context.Context, id string, data map[string]interface{}, ttl time.Duration) error {
+	return f.Store.Set(ctx, id, data, ttl)
+}
+
+func (f *failingStore) Delete(ctx context.Context, id string) error {
+	return f.Store.Delete(ctx, id)
+}
+
+func (f *failingStore) Exists(ctx context.Context, id string) (bool, error) {
+	return f.Store.Exists(ctx, id)
+}
+
+func TestKVManager_RefreshGetError(t *testing.T) {
+	mr, client := setupMiniRedis(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	base := NewRedisStore(client, "refresh-err:")
+	wrapped := &failingStore{Store: base, getErr: errors.New("get failed")}
+	mgr := NewKVManager(wrapped, 5*time.Minute)
+
+	// Refresh when Get returns error should propagate error
+	err := mgr.Refresh(ctx, "any-id", 10*time.Minute)
+	if err == nil {
+		t.Error("expected error when Get fails in Refresh")
 	}
 }
