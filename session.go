@@ -103,7 +103,8 @@ func (m *Manager) TouchSession(session *SessionData) error {
 // FiberSessionConfig returns a fiber/v2/middleware/session.Config configured to use the Manager's storage.
 func (m *Manager) FiberSessionConfig() fibersession.Config {
 	sameSite := fiber.CookieSameSiteLaxMode
-	switch m.config.SameSite {
+	normalizedSameSite := normalizeSameSite(m.config.SameSite)
+	switch normalizedSameSite {
 	case "Strict":
 		sameSite = fiber.CookieSameSiteStrictMode
 	case "None":
@@ -112,13 +113,18 @@ func (m *Manager) FiberSessionConfig() fibersession.Config {
 		sameSite = fiber.CookieSameSiteDisabled
 	}
 
+	cookieSecure := m.config.Secure
+	if normalizedSameSite == "None" && !cookieSecure {
+		cookieSecure = true
+	}
+
 	return fibersession.Config{
 		Expiration:     m.config.Expiration,
 		Storage:        m.storage,
 		KeyLookup:      fmt.Sprintf("cookie:%s", m.config.CookieName),
 		CookieDomain:   m.config.CookieDomain,
 		CookiePath:     m.config.CookiePath,
-		CookieSecure:   m.config.Secure,
+		CookieSecure:   cookieSecure,
 		CookieHTTPOnly: m.config.HTTPOnly,
 		CookieSameSite: sameSite,
 	}
@@ -321,7 +327,8 @@ func GetCreatedAt(session *fibersession.Session) time.Time {
 // CreateCookie creates a fiber.Cookie for session sharing across domains.
 func CreateCookie(config Config, sessionID string) *fiber.Cookie {
 	sameSite := fiber.CookieSameSiteLaxMode
-	switch config.SameSite {
+	normalizedSameSite := normalizeSameSite(config.SameSite)
+	switch normalizedSameSite {
 	case "Strict":
 		sameSite = fiber.CookieSameSiteStrictMode
 	case "None":
@@ -330,13 +337,18 @@ func CreateCookie(config Config, sessionID string) *fiber.Cookie {
 		sameSite = fiber.CookieSameSiteDisabled
 	}
 
+	cookieSecure := config.Secure
+	if normalizedSameSite == "None" && !cookieSecure {
+		cookieSecure = true
+	}
+
 	cookie := &fiber.Cookie{
 		Name:     config.CookieName,
 		Value:    sessionID,
 		Expires:  time.Now().Add(config.Expiration),
 		Path:     config.CookiePath,
 		Domain:   config.CookieDomain,
-		Secure:   config.Secure,
+		Secure:   cookieSecure,
 		HTTPOnly: config.HTTPOnly,
 		SameSite: sameSite,
 	}

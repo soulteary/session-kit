@@ -162,6 +162,13 @@ cfg := session.DefaultConfig().
     WithKeyPrefix("myapp:session:")   // Storage key prefix
 ```
 
+### Security Notes
+
+- **Validate configuration**: Call `cfg.Validate()` before use to catch unsafe or invalid combinations (e.g., `SameSite=None` without `Secure=true`).  
+- **SameSite behavior**: Supported values are `Strict`, `Lax`, `None`, and `Disabled`. Use `None` only when cross-site requests are required, and always with `Secure=true`.
+- **Login hardening**: After successful authentication, rotate the session ID (regenerate) to mitigate session fixation.
+- **Redis hardening**: Treat Redis as a trusted backend—use network isolation and credentials, and add timeouts at the client layer to prevent resource exhaustion.
+
 ### Storage Config
 
 ```go
