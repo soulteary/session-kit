@@ -1,18 +1,18 @@
 # session-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/session-kit.svg)](https://pkg.go.dev/github.com/soulteary/session-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/session-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/session-kit/v2)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/session-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/session-kit)
 
 [中文文档](README_CN.md)
 
-A Go library for session management with support for memory and Redis storage backends. Compatible with Fiber v2's session middleware.
+A Go library for session management with support for memory and Redis storage backends. Compatible with Fiber v3's session middleware.
 
 ## Features
 
 - **Multiple Storage Backends**: Memory (for development) and Redis (for production)
-- **Fiber v2 Compatible**: Implements `fiber.Storage` interface
+- **Fiber v3 Compatible**: Adapts storage backends to Fiber v3's context-aware `fiber.Storage` interface
 - **Factory Pattern**: Easy storage creation with configuration
 - **Session Management**: High-level session operations with SessionData struct
 - **Fluent Configuration**: Builder pattern for easy configuration
@@ -22,8 +22,10 @@ A Go library for session management with support for memory and Redis storage ba
 ## Installation
 
 ```bash
-go get github.com/soulteary/session-kit
+go get github.com/soulteary/session-kit/v2
 ```
+
+Fiber integrations require Fiber v3.4.0 or later. Applications that still use Fiber v2 should remain on `github.com/soulteary/session-kit` v1.
 
 ## Quick Start
 
@@ -34,7 +36,7 @@ package main
 
 import (
     "time"
-    session "github.com/soulteary/session-kit"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -54,7 +56,7 @@ func main() {
 package main
 
 import (
-    session "github.com/soulteary/session-kit"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -78,7 +80,7 @@ func main() {
 package main
 
 import (
-    session "github.com/soulteary/session-kit"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -104,9 +106,9 @@ package main
 import (
     "time"
 
-    "github.com/gofiber/fiber/v2"
-    fibersession "github.com/gofiber/fiber/v2/middleware/session"
-    session "github.com/soulteary/session-kit"
+    "github.com/gofiber/fiber/v3"
+    fibersession "github.com/gofiber/fiber/v3/middleware/session"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -121,9 +123,9 @@ func main() {
     manager := session.NewManager(storage, config)
 
     // Create Fiber session store
-    store := fibersession.New(manager.FiberSessionConfig())
+    store := fibersession.NewStore(manager.FiberSessionConfig())
 
-    app.Get("/", func(c *fiber.Ctx) error {
+    app.Get("/", func(c fiber.Ctx) error {
         sess, _ := store.Get(c)
 
         if session.IsAuthenticated(sess) {
@@ -133,7 +135,7 @@ func main() {
         return c.SendString("Please login")
     })
 
-    app.Post("/login", func(c *fiber.Ctx) error {
+    app.Post("/login", func(c fiber.Ctx) error {
         sess, _ := store.Get(c)
 
         session.SetUserID(sess, "user-123")

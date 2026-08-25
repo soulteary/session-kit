@@ -1,18 +1,18 @@
 # session-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/session-kit.svg)](https://pkg.go.dev/github.com/soulteary/session-kit)
-[![Go Report Card](https://goreportcard.com/badge/github.com/soulteary/session-kit)](https://goreportcard.com/report/github.com/soulteary/session-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/session-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/session-kit/v2)
+[![Go Report Card](https://goreportcard.com/badge/github.com/soulteary/session-kit/v2)](https://goreportcard.com/report/github.com/soulteary/session-kit/v2)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/session-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/session-kit)
 
 [English](README.md)
 
-Go 语言会话管理库，支持内存和 Redis 存储后端，兼容 Fiber v2 会话中间件。
+Go 语言会话管理库，支持内存和 Redis 存储后端，兼容 Fiber v3 会话中间件。
 
 ## 功能特性
 
 - **多存储后端**: 内存（开发用）和 Redis（生产用）
-- **Fiber v2 兼容**: 实现 `fiber.Storage` 接口
+- **Fiber v3 兼容**：将存储后端适配为 Fiber v3 支持上下文的 `fiber.Storage` 接口
 - **工厂模式**: 通过配置轻松创建存储
 - **会话管理**: 使用 SessionData 结构体进行高级会话操作
 - **链式配置**: 使用构建器模式进行简单配置
@@ -22,8 +22,10 @@ Go 语言会话管理库，支持内存和 Redis 存储后端，兼容 Fiber v2 
 ## 安装
 
 ```bash
-go get github.com/soulteary/session-kit
+go get github.com/soulteary/session-kit/v2
 ```
+
+Fiber 集成要求 Fiber v3.4.0 或更高版本。仍使用 Fiber v2 的应用应继续使用 `github.com/soulteary/session-kit` v1。
 
 ## 快速开始
 
@@ -34,7 +36,7 @@ package main
 
 import (
     "time"
-    session "github.com/soulteary/session-kit"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -54,7 +56,7 @@ func main() {
 package main
 
 import (
-    session "github.com/soulteary/session-kit"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -78,7 +80,7 @@ func main() {
 package main
 
 import (
-    session "github.com/soulteary/session-kit"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -104,9 +106,9 @@ package main
 import (
     "time"
 
-    "github.com/gofiber/fiber/v2"
-    fibersession "github.com/gofiber/fiber/v2/middleware/session"
-    session "github.com/soulteary/session-kit"
+    "github.com/gofiber/fiber/v3"
+    fibersession "github.com/gofiber/fiber/v3/middleware/session"
+    session "github.com/soulteary/session-kit/v2"
 )
 
 func main() {
@@ -121,9 +123,9 @@ func main() {
     manager := session.NewManager(storage, config)
 
     // 创建 Fiber 会话存储
-    store := fibersession.New(manager.FiberSessionConfig())
+    store := fibersession.NewStore(manager.FiberSessionConfig())
 
-    app.Get("/", func(c *fiber.Ctx) error {
+    app.Get("/", func(c fiber.Ctx) error {
         sess, _ := store.Get(c)
 
         if session.IsAuthenticated(sess) {
@@ -133,7 +135,7 @@ func main() {
         return c.SendString("请登录")
     })
 
-    app.Post("/login", func(c *fiber.Ctx) error {
+    app.Post("/login", func(c fiber.Ctx) error {
         sess, _ := store.Get(c)
 
         session.SetUserID(sess, "user-123")
