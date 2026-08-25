@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	fibersession "github.com/gofiber/fiber/v2/middleware/session"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/extractors"
+	fibersession "github.com/gofiber/fiber/v3/middleware/session"
 )
 
 // SessionKeys defines common session key names.
@@ -100,7 +101,7 @@ func (m *Manager) TouchSession(session *SessionData) error {
 	return m.SaveSession(session)
 }
 
-// FiberSessionConfig returns a fiber/v2/middleware/session.Config configured to use the Manager's storage.
+// FiberSessionConfig returns a fiber/v3/middleware/session.Config configured to use the Manager's storage.
 func (m *Manager) FiberSessionConfig() fibersession.Config {
 	sameSite := fiber.CookieSameSiteLaxMode
 	normalizedSameSite := normalizeSameSite(m.config.SameSite)
@@ -119,9 +120,9 @@ func (m *Manager) FiberSessionConfig() fibersession.Config {
 	}
 
 	return fibersession.Config{
-		Expiration:     m.config.Expiration,
-		Storage:        m.storage,
-		KeyLookup:      fmt.Sprintf("cookie:%s", m.config.CookieName),
+		IdleTimeout:    m.config.Expiration,
+		Storage:        fiberStorageAdapter{storage: m.storage},
+		Extractor:      extractors.FromCookie(m.config.CookieName),
 		CookieDomain:   m.config.CookieDomain,
 		CookiePath:     m.config.CookiePath,
 		CookieSecure:   cookieSecure,

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	fibersession "github.com/gofiber/fiber/v2/middleware/session"
+	"github.com/gofiber/fiber/v3"
+	fibersession "github.com/gofiber/fiber/v3/middleware/session"
 )
 
 // failingStorage implements Storage and returns configurable errors for testing.
@@ -243,8 +243,8 @@ func TestManagerFiberSessionConfig(t *testing.T) {
 	manager := NewManager(storage, config)
 	fiberCfg := manager.FiberSessionConfig()
 
-	if fiberCfg.Expiration != 2*time.Hour {
-		t.Errorf("expected Expiration to be 2h, got %v", fiberCfg.Expiration)
+	if fiberCfg.IdleTimeout != 2*time.Hour {
+		t.Errorf("expected IdleTimeout to be 2h, got %v", fiberCfg.IdleTimeout)
 	}
 	if fiberCfg.CookieDomain != ".example.com" {
 		t.Errorf("expected CookieDomain to be '.example.com', got %s", fiberCfg.CookieDomain)
@@ -297,10 +297,10 @@ func TestCreateCookieSameSiteVariants(t *testing.T) {
 		sameSite string
 		expected string
 	}{
-		{"Strict", "strict"},
-		{"Lax", "lax"},
-		{"None", "none"},
-		{"Disabled", "disabled"},
+		{"Strict", fiber.CookieSameSiteStrictMode},
+		{"Lax", fiber.CookieSameSiteLaxMode},
+		{"None", fiber.CookieSameSiteNoneMode},
+		{"Disabled", fiber.CookieSameSiteDisabled},
 	}
 
 	for _, tt := range tests {
@@ -319,13 +319,13 @@ func TestFiberSessionHelpers(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	store := fibersession.New(fibersession.Config{
-		Storage:    storage,
-		Expiration: 1 * time.Hour,
+	store := fibersession.NewStore(fibersession.Config{
+		Storage:     fiberStorageAdapter{storage: storage},
+		IdleTimeout: 1 * time.Hour,
 	})
 
 	// Test route
-	app.Get("/test", func(c *fiber.Ctx) error {
+	app.Get("/test", func(c fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err != nil {
 			return err
@@ -429,15 +429,15 @@ func TestFiberSessionUnauthenticate(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	store := fibersession.New(fibersession.Config{
-		Storage:    storage,
-		Expiration: 1 * time.Hour,
+	store := fibersession.NewStore(fibersession.Config{
+		Storage:     fiberStorageAdapter{storage: storage},
+		IdleTimeout: 1 * time.Hour,
 	})
 
 	var sessionCookie string
 
 	// First request: login and get session cookie
-	app.Get("/login", func(c *fiber.Ctx) error {
+	app.Get("/login", func(c fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err != nil {
 			return err
@@ -452,7 +452,7 @@ func TestFiberSessionUnauthenticate(t *testing.T) {
 	})
 
 	// Second endpoint: logout using the session from cookie
-	app.Get("/logout", func(c *fiber.Ctx) error {
+	app.Get("/logout", func(c fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err != nil {
 			return err
@@ -509,12 +509,12 @@ func TestFiberSessionGettersWithNilValues(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	store := fibersession.New(fibersession.Config{
-		Storage:    storage,
-		Expiration: 1 * time.Hour,
+	store := fibersession.NewStore(fibersession.Config{
+		Storage:     fiberStorageAdapter{storage: storage},
+		IdleTimeout: 1 * time.Hour,
 	})
 
-	app.Get("/test-nil", func(c *fiber.Ctx) error {
+	app.Get("/test-nil", func(c fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err != nil {
 			return err
@@ -570,10 +570,10 @@ func TestFiberSessionConfigSameSiteVariants(t *testing.T) {
 		sameSite string
 		expected string
 	}{
-		{"Strict", "strict"},
-		{"Lax", "lax"},
-		{"None", "none"},
-		{"Disabled", "disabled"},
+		{"Strict", fiber.CookieSameSiteStrictMode},
+		{"Lax", fiber.CookieSameSiteLaxMode},
+		{"None", fiber.CookieSameSiteNoneMode},
+		{"Disabled", fiber.CookieSameSiteDisabled},
 	}
 
 	for _, tt := range tests {
@@ -611,12 +611,12 @@ func TestFiberSessionGettersWithWrongTypes(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	store := fibersession.New(fibersession.Config{
-		Storage:    storage,
-		Expiration: 1 * time.Hour,
+	store := fibersession.NewStore(fibersession.Config{
+		Storage:     fiberStorageAdapter{storage: storage},
+		IdleTimeout: 1 * time.Hour,
 	})
 
-	app.Get("/test-wrong-types", func(c *fiber.Ctx) error {
+	app.Get("/test-wrong-types", func(c fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err != nil {
 			return err
@@ -759,7 +759,7 @@ func TestCreateCookieSameSiteNoneForcesSecure(t *testing.T) {
 	if !cookie.Secure {
 		t.Error("expected Cookie Secure to be true when SameSite is None")
 	}
-	if cookie.SameSite != "none" {
+	if cookie.SameSite != fiber.CookieSameSiteNoneMode {
 		t.Errorf("expected SameSite none, got %s", cookie.SameSite)
 	}
 }

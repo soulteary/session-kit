@@ -4,8 +4,8 @@ import (
 	"time"
 )
 
-// Storage is the interface for session storage backends.
-// This interface is compatible with fiber.Storage interface.
+// Storage is the interface for session storage backends. FiberSessionConfig
+// adapts this contract to Fiber v3's context-aware fiber.Storage interface.
 type Storage interface {
 	// Get retrieves the value for the given key.
 	// Returns nil, nil if the key does not exist.
