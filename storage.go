@@ -13,7 +13,13 @@ type Storage interface {
 
 	// Set stores the given value for the given key along with an expiration value.
 	// If expiration is 0, the value never expires.
-	// Empty key or value will be ignored without an error.
+	//
+	// An empty key is ignored without an error, matching fiber.Storage. An
+	// empty value DELETES the key: treating it as a no-op left the previous
+	// value in place, so overwriting a session with empty data kept the old,
+	// still-authenticated payload readable. Every backend must implement it
+	// this way, or code tested against one backend behaves differently in
+	// production against another.
 	Set(key string, val []byte, exp time.Duration) error
 
 	// Delete removes the value for the given key.

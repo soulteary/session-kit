@@ -113,11 +113,12 @@ func (c Config) WithKeyPrefix(prefix string) Config {
 func (c Config) Validate() error {
 	// This is a validation-only method, not a mutation method.
 	// All defaults are handled by DefaultConfig() and builder methods.
-	if c.CookieName == "" && c.CookiePath == "" && c.CookieDomain == "" &&
-		c.SameSite == "" && c.Expiration == 0 && c.KeyPrefix == "" &&
-		!c.Secure && !c.HTTPOnly {
-		return nil
-	}
+	//
+	// The zero value used to be accepted here as "nothing configured yet",
+	// which meant session.Config{} passed validation and produced an unnamed
+	// cookie with Secure=false and HTTPOnly=false. A validator that approves
+	// the least safe possible configuration is worse than no validator, so the
+	// exemption is gone: start from DefaultConfig().
 	if c.CookieName == "" {
 		return fmt.Errorf("cookie name cannot be empty")
 	}

@@ -588,21 +588,31 @@ func TestFiberSessionConfigSameSiteVariants(t *testing.T) {
 	}
 }
 
-func TestManagerSaveSessionError(t *testing.T) {
+// Saving an already-expired session used to succeed and grant it a full fresh
+// expiration period, so a session that kept being written never expired at all.
+func TestManagerSaveSessionRefusesExpired(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	config := DefaultConfig()
-	manager := NewManager(storage, config)
+	manager := NewManager(storage, DefaultConfig())
 
-	// Create an expired session
 	session := manager.CreateSession("session-123")
-	session.ExpiresAt = time.Now().Add(-1 * time.Hour) // Expired
+	session.ExpiresAt = time.Now().Add(-1 * time.Hour)
 
-	// Save should still work (with adjusted TTL)
-	err := manager.SaveSession(session)
-	if err != nil {
-		t.Fatalf("failed to save expired session: %v", err)
+	if err := manager.SaveSession(session); err == nil {
+		t.Fatal("SaveSession() on an expired session returned nil; it was silently resurrected")
+	}
+	if data, _ := storage.Get("session-123"); data != nil {
+		t.Error("the expired session was written to storage")
+	}
+
+	// Extending a live session deliberately still works.
+	live := manager.CreateSession("session-456")
+	if err := manager.SaveSession(live); err != nil {
+		t.Fatalf("SaveSession() on a live session error = %v", err)
+	}
+	if err := manager.TouchSession(session); err != nil {
+		t.Fatalf("TouchSession() should renew an expired session, got %v", err)
 	}
 }
 

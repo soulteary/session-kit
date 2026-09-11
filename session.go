@@ -60,7 +60,11 @@ func (m *Manager) SaveSession(session *SessionData) error {
 
 	ttl := time.Until(session.ExpiresAt)
 	if ttl <= 0 {
-		ttl = m.config.Expiration
+		// Falling back to a full expiration period here resurrected an already
+		// expired session: saving it granted it another complete lifetime, so
+		// a session that kept being written never actually expired. Refuse
+		// instead; use TouchSession to extend a live session deliberately.
+		return fmt.Errorf("refusing to save expired session %q (expired at %s)", session.ID, session.ExpiresAt)
 	}
 
 	return m.storage.Set(session.ID, data, ttl)
@@ -141,13 +145,20 @@ func Authenticate(session *fibersession.Session) error {
 }
 
 // Unauthenticate destroys a fiber session.
-// Note: session.Destroy() requires a valid context (ctx).
-// If session has been previously saved, the context may be released.
+//
+// The identity keys are cleared and then persisted BEFORE Destroy is
+// attempted, so that a failing Destroy leaves a de-authenticated session
+// rather than a fully authenticated one. Previously the clearing happened only
+// in memory -- Save was never called -- so the "in case Destroy fails" comment
+// described a safeguard that did not exist: if Destroy failed, the stored
+// session was untouched and still authenticated.
+//
 // This function handles nil session gracefully.
 func Unauthenticate(session *fibersession.Session) error {
 	if session == nil {
 		return nil
 	}
+
 	// Clear authenticated flag first (in case Destroy fails)
 	session.Set(KeyAuthenticated, false)
 	session.Delete(KeyUserID)
@@ -157,7 +168,24 @@ func Unauthenticate(session *fibersession.Session) error {
 	session.Delete(KeyScopes)
 	session.Delete(KeyCreatedAt)
 	session.Delete(KeyLastAccess)
-	return session.Destroy()
+
+	// Destroy first; persist the cleared state only as a fallback.
+	//
+	// Destroy deletes the stored record and expires the cookie, which makes a
+	// preceding Save a write of data that is about to be deleted -- a wasted
+	// round trip against Redis, and a window in which the cleared session is
+	// persisted under the id being removed. Saving only when Destroy fails
+	// keeps the safeguard the comment above describes: a failed destroy still
+	// leaves a de-authenticated session rather than an authenticated one.
+	destroyErr := session.Destroy()
+	if destroyErr == nil {
+		return nil
+	}
+
+	if saveErr := session.Save(); saveErr != nil {
+		return fmt.Errorf("destroy failed (%w) and the cleared session could not be saved either: %v", destroyErr, saveErr)
+	}
+	return destroyErr
 }
 
 // IsAuthenticated checks if a fiber session is authenticated.
@@ -231,15 +259,35 @@ func SetAMR(session *fibersession.Session, amr []string) {
 
 // GetAMR gets the authentication methods references from a fiber session.
 func GetAMR(session *fibersession.Session) []string {
-	val := session.Get(KeyAMR)
-	if val == nil {
+	return stringSlice(session.Get(KeyAMR))
+}
+
+// stringSlice coerces a value read back from session storage into []string.
+//
+// Fiber v3 serialises session data with msgpack, which decodes an array into
+// []interface{} rather than []string. A plain val.([]string) assertion
+// therefore succeeded only within the request that wrote the value and
+// returned nil on every subsequent one -- so scopes and AMR silently vanished
+// after the first round-trip, and HasScope/HasAMR always reported false.
+func stringSlice(val interface{}) []string {
+	switch v := val.(type) {
+	case nil:
+		return nil
+	case []string:
+		return v
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return nil
+			}
+			out = append(out, s)
+		}
+		return out
+	default:
 		return nil
 	}
-	amr, ok := val.([]string)
-	if !ok {
-		return nil
-	}
-	return amr
 }
 
 // AddAMR adds an authentication method reference to a fiber session.
@@ -272,15 +320,7 @@ func SetScopes(session *fibersession.Session, scopes []string) {
 
 // GetScopes gets the authorization scopes from a fiber session.
 func GetScopes(session *fibersession.Session) []string {
-	val := session.Get(KeyScopes)
-	if val == nil {
-		return nil
-	}
-	scopes, ok := val.([]string)
-	if !ok {
-		return nil
-	}
-	return scopes
+	return stringSlice(session.Get(KeyScopes))
 }
 
 // HasScope checks if a fiber session has a specific scope.
