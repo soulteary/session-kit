@@ -28,6 +28,7 @@ type MemoryStorage struct {
 	keyPrefix string
 	gcTicker  *time.Ticker
 	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // NewMemoryStorage creates a new in-memory storage.
@@ -105,15 +106,28 @@ func (s *MemoryStorage) Get(key string) ([]byte, error) {
 		return nil, nil
 	}
 
-	return entry.data, nil
+	// Return a copy. Set already copies on write; returning the internal slice
+	// here made the pair asymmetric, so a caller mutating what it read
+	// corrupted the stored session for every later reader -- and raced with
+	// concurrent writers.
+	out := make([]byte, len(entry.data))
+	copy(out, entry.data)
+	return out, nil
 }
 
 // Set stores the given value for the given key along with an expiration value.
 // If expiration is 0, the value never expires.
-// Empty key or value will be ignored without an error.
+//
+// An empty key is ignored without an error, matching fiber.Storage. An empty
+// value DELETES the key rather than being ignored: treating it as a no-op left
+// the previous value in place, so overwriting a session with empty data kept
+// the old, still-authenticated payload readable.
 func (s *MemoryStorage) Set(key string, val []byte, exp time.Duration) error {
-	if key == "" || len(val) == 0 {
+	if key == "" {
 		return nil
+	}
+	if len(val) == 0 {
+		return s.Delete(key)
 	}
 
 	fullKey := s.buildKey(key)
@@ -156,11 +170,17 @@ func (s *MemoryStorage) Reset() error {
 }
 
 // Close stops the garbage collector and releases resources.
+//
+// Safe to call more than once: an unguarded close(s.done) panicked on the
+// second call, which is easy to hit with a deferred Close plus an explicit
+// shutdown path.
 func (s *MemoryStorage) Close() error {
-	if s.gcTicker != nil {
-		s.gcTicker.Stop()
-	}
-	close(s.done)
+	s.closeOnce.Do(func() {
+		if s.gcTicker != nil {
+			s.gcTicker.Stop()
+		}
+		close(s.done)
+	})
 	return nil
 }
 

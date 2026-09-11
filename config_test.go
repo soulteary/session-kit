@@ -72,8 +72,11 @@ func TestConfigWithMethods(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
-	if err := (Config{}).Validate(); err != nil {
-		t.Errorf("expected no error with zero config, got %v", err)
+	// The zero value is the least safe configuration there is: no cookie name,
+	// Secure=false, HTTPOnly=false. A validator that approves it gives false
+	// assurance, so it is now rejected -- start from DefaultConfig().
+	if err := (Config{}).Validate(); err == nil {
+		t.Error("expected the zero config to be rejected; it has Secure=false and HTTPOnly=false")
 	}
 	if err := DefaultConfig().Validate(); err != nil {
 		t.Errorf("expected no error with default config, got %v", err)
