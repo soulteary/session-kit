@@ -86,14 +86,22 @@ func (s *RedisStorage) Get(key string) ([]byte, error) {
 
 // Set stores the given value for the given key along with an expiration value.
 // If expiration is 0, the value never expires.
-// Empty key or value will be ignored without an error.
+//
+// An empty key is ignored without an error, matching fiber.Storage. An empty
+// value DELETES the key, as the Storage contract requires: ignoring it left
+// the previous value in place, so overwriting a session with empty data kept
+// the old, still-authenticated payload readable -- and code tested against
+// MemoryStorage, which does delete, behaved differently here in production.
 func (s *RedisStorage) Set(key string, val []byte, exp time.Duration) error {
 	if s.client == nil {
 		return fmt.Errorf("redis client is nil")
 	}
 
-	if key == "" || len(val) == 0 {
-		return nil // Ignore empty key or value as per interface
+	if key == "" {
+		return nil
+	}
+	if len(val) == 0 {
+		return s.Delete(key)
 	}
 
 	fullKey := s.buildKey(key)

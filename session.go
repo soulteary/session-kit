@@ -169,17 +169,23 @@ func Unauthenticate(session *fibersession.Session) error {
 	session.Delete(KeyCreatedAt)
 	session.Delete(KeyLastAccess)
 
-	// Persist the cleared state. A failure here is not fatal on its own --
-	// Destroy may still succeed -- but it must not be silently ignored.
-	saveErr := session.Save()
-
-	if err := session.Destroy(); err != nil {
-		if saveErr != nil {
-			return fmt.Errorf("destroy failed (%w) and the cleared session could not be saved either: %v", err, saveErr)
-		}
-		return err
+	// Destroy first; persist the cleared state only as a fallback.
+	//
+	// Destroy deletes the stored record and expires the cookie, which makes a
+	// preceding Save a write of data that is about to be deleted -- a wasted
+	// round trip against Redis, and a window in which the cleared session is
+	// persisted under the id being removed. Saving only when Destroy fails
+	// keeps the safeguard the comment above describes: a failed destroy still
+	// leaves a de-authenticated session rather than an authenticated one.
+	destroyErr := session.Destroy()
+	if destroyErr == nil {
+		return nil
 	}
-	return nil
+
+	if saveErr := session.Save(); saveErr != nil {
+		return fmt.Errorf("destroy failed (%w) and the cleared session could not be saved either: %v", destroyErr, saveErr)
+	}
+	return destroyErr
 }
 
 // IsAuthenticated checks if a fiber session is authenticated.
