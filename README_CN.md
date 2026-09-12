@@ -19,6 +19,15 @@ Go 语言会话管理库，支持内存和 Redis 存储后端，兼容 Fiber v3 
 - **自动过期**: 基于 TTL 的会话过期
 - **线程安全**: 支持并发访问
 
+## 环境要求
+
+- **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
+- Fiber 辅助函数需要 `github.com/gofiber/fiber/v3` v3.4.0+
+- Redis 存储需要 `github.com/redis/go-redis/v9`
+
+v2 模块线面向 Fiber v3。仍在 Fiber v2 上的应用请继续使用
+`github.com/soulteary/session-kit` v1。
+
 ## 安装
 
 ```bash
@@ -168,7 +177,11 @@ cfg := session.DefaultConfig().
 
 ### 安全建议
 
-- **配置校验**：使用前调用 `cfg.Validate()`，避免无效或不安全的组合（例如 `SameSite=None` 但未开启 `Secure=true`）。
+- **请从 `DefaultConfig()` 开始**，而不是 `session.Config{}`。零值不会通过校验：它会
+  产出一个无名称的 Cookie，且 `Secure=false`、`HTTPOnly=false`；一个会批准"可用配置中
+  最不安全的那个"的校验器只会带来虚假的安心感。
+- **配置校验**：使用前调用 `cfg.Validate()`，避免无效或不安全的组合（例如
+  `SameSite=None` 但未开启 `Secure=true`）。
 - **SameSite 行为**：支持 `Strict`、`Lax`、`None`、`Disabled`。只有在必须跨站请求时使用 `None`，且务必启用 `Secure=true`。
 - **登录加固**：认证成功后应轮换（重新生成）会话 ID，以防止会话固定攻击。
 - **Redis 加固**：将 Redis 视为可信后端，使用网络隔离与访问控制，并在客户端设置超时避免资源耗尽。
@@ -216,6 +229,49 @@ val, ok := session.GetValue("custom")
 session.IsExpired()
 session.IsAuthenticated()
 session.Touch()  // 更新最后访问时间
+```
+
+## 会话生命周期
+
+### 保存不会续期
+
+`SaveSession` 会**拒绝一个已经过期的会话**。此前写入一个过期会话会给它再来一整个生命
+周期，于是一个持续被写入的会话永远不会过期。
+
+`TouchSession` 才是有意延长会话的方式：
+
+```go
+if err := manager.TouchSession(ctx, sessionID); err != nil {
+    // 会话已不存在或已过期，请重新认证
+}
+```
+
+### 登出
+
+`Unauthenticate` 会清除身份相关的键、**把清除后的状态保存下来**，然后才销毁会话。
+两种失败都会上报：
+
+```go
+if err := session.Unauthenticate(sess); err != nil {
+    // 即便 Destroy 失败，该会话也已不再处于已认证状态 ——
+    // 清除后的状态是先被持久化的。
+    log.Printf("登出: %v", err)
+}
+```
+
+这个清除此前只存在于内存中，于是 `Destroy` 失败时，存储里的会话毫发无损、仍然处于完全
+认证状态——而这恰恰是那道保险要覆盖的情形。
+
+### Scope 与 AMR 能在往返后存活
+
+Fiber v3 用 msgpack 序列化会话数据，而它把数组解码回 `[]interface{}` 而不是
+`[]string`。`GetScopes`、`GetAMR`、`HasScope` 和 `HasAMR` 两种表示都接受，因此在某个
+请求里设置的 scope 在下一个请求里仍然可见：
+
+```go
+session.SetScopes(sess, []string{"read", "write"})
+// 在后续请求中：
+session.HasScope(sess, "read") // true
 ```
 
 ## Fiber 会话辅助函数
@@ -285,6 +341,31 @@ _ = mgr.Delete(ctx, id)
 - **NewStorageFromEnv(redisEnabled, redisAddr, redisPassword, redisDB, keyPrefix)** — 按“是否启用 Redis + 连接参数”创建 Storage（`redisEnabled` 为 false 时使用内存）。
 - **MustNewStorage(cfg)** — 与 `NewStorage(cfg)` 相同，但出错时 panic，适用于 `main()` 初始化。
 
+## 升级说明（v2.2.0）
+
+没有新增或删除任何 API。有四处行为变化，以及一种此前能通过校验的配置现在不能了。
+
+- **`session.Config{}` 不再通过校验。** 零值此前被当作"还没配置"而被接受，于是它能通过
+  `Validate()`，并产出一个无名称的 Cookie、`Secure=false`、`HTTPOnly=false`。
+  **请从 `DefaultConfig()` 开始**——如果你是用字面量构造 `Config` 并依赖 `Validate()`
+  返回 nil，现在它会报告 Cookie 名称为空。
+- **Scope 与 AMR 能在存储往返后存活。** `GetScopes` 和 `GetAMR` 此前断言
+  `val.([]string)`，而这只在写入该值的那个请求内成立：msgpack 把数组解码回
+  `[]interface{}`，于是**在之后的每个请求里它们都静默返回空，`HasScope`/`HasAMR`
+  永远报告 false**。如果你为此做过绕行——每个请求重新推导 scope，或者把 `HasScope` 当成
+  不可靠的——现在可以不用了。
+- **`SaveSession` 拒绝已过期的会话。** 写入过期会话此前会给它再来一整个生命周期，于是
+  持续被写入的会话永不过期。请用 `TouchSession` 来有意延长。**此前会成功的保存现在会
+  返回错误**，而这才是正确答案。
+- **登出会先持久化再销毁。** `Unauthenticate` 此前"为防 Destroy 失败"清除身份键却从不
+  保存，于是 `Destroy` 失败时存储中的会话仍然处于完全认证状态。现在清除后的状态会先被
+  保存，而且 `Save` 失败会和 `Destroy` 失败一起上报，不再被丢弃。
+- **`MemoryStorage.Get` 返回副本。** 它此前写入时拷贝、读取时却返回内部切片，于是调用方
+  修改读到的内容会破坏存储中的会话（对之后所有读者可见），并与并发写入竞争。
+- **`MemoryStorage.Set` 传空值会删除该键。** 它此前忽略这次写入，把旧负载留在原处——
+  于是用空数据覆盖一个会话，旧的、仍然已认证的字节依然可读。
+- **`MemoryStorage.Close` 可重复调用。** 第二次调用此前会 panic。
+
 ## 测试
 
 ```bash
@@ -295,4 +376,4 @@ go tool cover -html=coverage.out
 
 ## 许可证
 
-Apache License 2.0
+Apache License 2.0 —— 详见 [LICENSE](LICENSE)。
