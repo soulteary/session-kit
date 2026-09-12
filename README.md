@@ -19,6 +19,15 @@ A Go library for session management with support for memory and Redis storage ba
 - **Automatic Expiration**: TTL-based session expiration
 - **Thread-Safe**: Safe for concurrent access
 
+## Requirements
+
+- **Go 1.27+** (`go.mod` declares `go 1.27.0`)
+- `github.com/gofiber/fiber/v3` v3.4.0+ for the Fiber helpers
+- `github.com/redis/go-redis/v9` for Redis storage
+
+This v2 module line targets Fiber v3. Applications still on Fiber v2 should
+remain on `github.com/soulteary/session-kit` v1.
+
 ## Installation
 
 ```bash
@@ -168,7 +177,12 @@ cfg := session.DefaultConfig().
 
 ### Security Notes
 
-- **Validate configuration**: Call `cfg.Validate()` before use to catch unsafe or invalid combinations (e.g., `SameSite=None` without `Secure=true`).  
+- **Start from `DefaultConfig()`**, not `session.Config{}`. The zero value does
+  not validate: it would produce an unnamed cookie with `Secure=false` and
+  `HTTPOnly=false`, and a validator that approves the least safe configuration
+  available gives false assurance.
+- **Validate configuration**: call `cfg.Validate()` before use to catch unsafe or
+  invalid combinations (e.g. `SameSite=None` without `Secure=true`).
 - **SameSite behavior**: Supported values are `Strict`, `Lax`, `None`, and `Disabled`. Use `None` only when cross-site requests are required, and always with `Secure=true`.
 - **Login hardening**: After successful authentication, rotate the session ID (regenerate) to mitigate session fixation.
 - **Redis hardening**: Treat Redis as a trusted backend—use network isolation and credentials, and add timeouts at the client layer to prevent resource exhaustion.
@@ -216,6 +230,51 @@ val, ok := session.GetValue("custom")
 session.IsExpired()
 session.IsAuthenticated()
 session.Touch()  // Update last access time
+```
+
+## Session Lifecycle
+
+### Expiry is not renewed by saving
+
+`SaveSession` **refuses an already-expired session**. Writing one used to grant it
+another full lifetime, so a session that kept being written never expired.
+
+`TouchSession` is the deliberate way to extend a session:
+
+```go
+if err := manager.TouchSession(ctx, sessionID); err != nil {
+    // the session is gone or expired; re-authenticate
+}
+```
+
+### Logout
+
+`Unauthenticate` clears the identity keys, **saves that cleared state**, and then
+destroys the session. Both failures are reported:
+
+```go
+if err := session.Unauthenticate(sess); err != nil {
+    // The session is no longer authenticated even if Destroy failed —
+    // the cleared state was persisted first.
+    log.Printf("logout: %v", err)
+}
+```
+
+The clearing used to live only in memory, so when `Destroy` failed the stored
+session was untouched and still fully authenticated — exactly the case the
+safeguard was there to cover.
+
+### Scopes and AMR survive a round trip
+
+Fiber v3 serialises session data with msgpack, which decodes an array back as
+`[]interface{}` rather than `[]string`. `GetScopes`, `GetAMR`, `HasScope` and
+`HasAMR` accept either representation, so a scope set on one request is still
+visible on the next:
+
+```go
+session.SetScopes(sess, []string{"read", "write"})
+// on a later request:
+session.HasScope(sess, "read") // true
 ```
 
 ## Fiber Session Helpers
@@ -285,6 +344,39 @@ _ = mgr.Delete(ctx, id)
 - **NewStorageFromEnv(redisEnabled, redisAddr, redisPassword, redisDB, keyPrefix)** — build Storage from env-like flags (memory if `redisEnabled` is false).
 - **MustNewStorage(cfg)** — same as `NewStorage(cfg)` but panics on error (e.g. in `main()`).
 
+## Upgrade Notes (v2.2.0)
+
+No API was added or removed. Four behaviours change, and one configuration that
+used to validate no longer does.
+
+- **`session.Config{}` no longer validates.** The zero value was accepted as
+  "nothing configured yet", so it passed `Validate()` and produced an unnamed
+  cookie with `Secure=false` and `HTTPOnly=false`. **Start from
+  `DefaultConfig()`** — if you built a `Config` literally and relied on
+  `Validate()` returning nil, it now reports the empty cookie name.
+- **Scopes and AMR survive storage.** `GetScopes` and `GetAMR` asserted
+  `val.([]string)`, which succeeded only inside the request that wrote the value:
+  msgpack decodes an array back as `[]interface{}`, so on **every later request
+  they silently returned nothing and `HasScope`/`HasAMR` always reported false**.
+  If you worked around that — re-deriving scopes per request, or treating
+  `HasScope` as unreliable — you can stop.
+- **`SaveSession` refuses an expired session.** Writing one granted it another
+  full lifetime, so a session that kept being written never expired. Use
+  `TouchSession` to extend one deliberately. **A save that used to succeed now
+  returns an error**, which is the correct answer.
+- **Logout persists before destroying.** `Unauthenticate` cleared the identity
+  keys "in case Destroy fails" and never saved them, so a failed `Destroy` left the
+  stored session fully authenticated. The cleared state is saved first, and a
+  `Save` failure is reported alongside a `Destroy` failure instead of being
+  discarded.
+- **`MemoryStorage.Get` returns a copy.** It copied on write but returned its
+  internal slice on read, so a caller mutating what it read corrupted the stored
+  session for every later reader, and raced with concurrent writers.
+- **`MemoryStorage.Set` with an empty value deletes the key.** It ignored the
+  write, leaving the previous payload in place — so overwriting a session with
+  empty data kept the old, still authenticated bytes readable.
+- **`MemoryStorage.Close` is idempotent.** A second call panicked.
+
 ## Testing
 
 ```bash
@@ -295,4 +387,4 @@ go tool cover -html=coverage.out
 
 ## License
 
-Apache License 2.0
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
