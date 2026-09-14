@@ -344,6 +344,13 @@ _ = mgr.Delete(ctx, id)
 - **NewStorageFromEnv(redisEnabled, redisAddr, redisPassword, redisDB, keyPrefix)** — build Storage from env-like flags (memory if `redisEnabled` is false).
 - **MustNewStorage(cfg)** — same as `NewStorage(cfg)` but panics on error (e.g. in `main()`).
 
+## Upgrade Notes (v2.3.0)
+
+Dependency refresh only. No API was removed and no call needs rewriting.
+
+- Test Redis is `miniredis` v2.39.0 (was v2.36.1).
+- Still requires `redis-kit` v1.6.0. That module had no newer published release.
+
 ## Upgrade Notes (v2.2.0)
 
 No API was added or removed. Four behaviours change, and one configuration that
