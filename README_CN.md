@@ -341,6 +341,13 @@ _ = mgr.Delete(ctx, id)
 - **NewStorageFromEnv(redisEnabled, redisAddr, redisPassword, redisDB, keyPrefix)** — 按“是否启用 Redis + 连接参数”创建 Storage（`redisEnabled` 为 false 时使用内存）。
 - **MustNewStorage(cfg)** — 与 `NewStorage(cfg)` 相同，但出错时 panic，适用于 `main()` 初始化。
 
+## 升级说明（v2.3.0）
+
+仅升级依赖。没有删除任何 API，调用方无需改代码。
+
+- 测试用 Redis 为 `miniredis` v2.39.0（此前 v2.36.1）。
+- 仍依赖 `redis-kit` v1.6.0。该模块没有更新的已发布版本。
+
 ## 升级说明（v2.2.0）
 
 没有新增或删除任何 API。有四处行为变化，以及一种此前能通过校验的配置现在不能了。
