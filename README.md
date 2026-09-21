@@ -23,7 +23,7 @@ does not use:
 |---|---|---|
 | `github.com/soulteary/session-kit/v3` | *(standard library only)* | `Storage`, `MemoryStorage`, `Manager`, `SessionData`, `Store`, `KVManager`, `Config`, `CreateCookie` and the session helpers |
 | `.../v3/fiberadapter` | Fiber v3, fasthttp | `SessionConfig`, `Storage`, `Cookie`, `SameSite` |
-| `.../v3/redisstore` | go-redis, redis-kit | `Storage`, `New`, `NewFromConfig`, `Store`, `NewStore`, `Client` |
+| `.../v3/redisstore` | go-redis, redis-kit | `Storage`, `New`, `NewFromConfig`, `NewFromStorageConfig`, `Store`, `NewStore`, `Client` |
 
 A net/http service on in-memory sessions pays nothing for either subpackage
 existing. Measured for a program that imports only the root package, against
@@ -129,6 +129,28 @@ check:
 storage, err := redisstore.NewFromConfig("localhost:6379", "", 0, "myapp:session:")
 ```
 
+Those four parameters can only describe one server. For a cluster or a
+Sentinel deployment, pass a full config instead — it builds whichever client
+the configuration describes:
+
+```go
+// Redis Cluster
+storage, err := redisstore.NewFromStorageConfig(session.DefaultStorageConfig().
+    WithRedisAddrs("10.0.0.1:6379", "10.0.0.2:6379", "10.0.0.3:6379").
+    WithKeyPrefix("myapp:session:"))
+
+// Sentinel. WithRedisSentinelAuth is for the Sentinel nodes themselves, which
+// usually do not share credentials with the Redis server behind them.
+storage, err := redisstore.NewFromStorageConfig(session.DefaultStorageConfig().
+    WithRedisAddrs("10.0.0.1:26379", "10.0.0.2:26379").
+    WithRedisMasterName("mymaster").
+    WithRedisSentinelAuth("sentinel-user", "sentinel-pass").
+    WithKeyPrefix("myapp:session:"))
+```
+
+`redisstore.New` has always accepted any client shape; this is the path that
+can now *construct* one.
+
 ### Choosing a backend from configuration
 
 `NewStorage` builds memory storage on its own. Every other backend has to be
@@ -148,6 +170,10 @@ cfg := session.DefaultStorageConfig().
 
 storage, err := session.NewStorage(cfg)
 ```
+
+The factory passes the whole config through, so the cluster and Sentinel
+fields work here too — `WithRedisAddrs`, `WithRedisMasterName` and
+`WithRedisSentinelAuth`.
 
 Without that import, `NewStorage` says so by name instead of failing as an
 unknown type. `RegisterStorage` is exported, so a Memcached, DynamoDB or
@@ -329,10 +355,16 @@ cosmetic difference.
 cfg := session.DefaultStorageConfig().
     WithType(session.StorageTypeRedis).      // memory or redis
     WithKeyPrefix("session:").               // Key prefix
-    WithRedisAddr("localhost:6379").         // Redis address
+    WithRedisAddr("localhost:6379").         // Single standalone server
     WithRedisPassword("secret").             // Redis password
     WithRedisDB(0).                          // Redis database
     WithMemoryGCInterval(10 * time.Minute)   // Memory GC interval
+
+// Cluster or Sentinel instead of a single server
+cfg = cfg.
+    WithRedisAddrs("10.0.0.1:6379", "10.0.0.2:6379").  // takes precedence over WithRedisAddr
+    WithRedisMasterName("mymaster").                    // set = Sentinel failover
+    WithRedisSentinelAuth("sentinel-user", "pass")      // credentials for Sentinel itself
 ```
 
 There is no `WithRedisClient`: a config describes a connection the factory

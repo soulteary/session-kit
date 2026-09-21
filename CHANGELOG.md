@@ -10,6 +10,45 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+### Added
+
+- **Cluster and Sentinel session storage can now be built from configuration.**
+  `redisstore.New` has always accepted any go-redis client shape, but the only
+  way to have the package *construct* one was `NewFromConfig(addr, password,
+  db, keyPrefix)` — four parameters that can describe exactly one standalone
+  server. A cluster or Sentinel deployment was therefore reachable only by
+  callers who already held a client, and not at all through
+  `session.NewStorage`.
+
+  `redisstore.NewFromStorageConfig(cfg)` takes a full `session.StorageConfig`
+  and builds whichever client it describes: a Sentinel-backed failover client
+  when `RedisMasterName` is set, a cluster client when `RedisAddrs` holds more
+  than one address, and a single-node client otherwise.
+
+- **`session.StorageConfig` gains `RedisAddrs`, `RedisMasterName`,
+  `RedisSentinelUsername` and `RedisSentinelPassword`**, with `WithRedisAddrs`,
+  `WithRedisMasterName` and `WithRedisSentinelAuth`. `RedisAddrs` takes
+  precedence over `RedisAddr`. The Sentinel credentials are deliberately
+  separate from `RedisPassword`: they authenticate to the Sentinel nodes, not
+  to the Redis server behind them, and the two routinely differ.
+
+  These are plain data, so the root package still imports nothing outside the
+  standard library — only `redisstore` reads them.
+
+### Changed
+
+- **`session.NewStorage` passes the whole `StorageConfig` to the Redis
+  builder** instead of four of its fields, which is what lets the registry
+  path reach the new client shapes. `NewFromConfig` keeps its signature and
+  its behaviour, and is now the single-server shorthand for
+  `NewFromStorageConfig`.
+
+- **Requires `redis-kit` v1.7.0**, for `client.NewUniversalClient`. That
+  release also widened redis-kit's own parameters from `*redis.Client` to
+  `redis.UniversalClient`; nothing in session-kit had to change for it, which
+  this bump incidentally confirms.
+
+
 ## [3.0.1] — 2026-09-21
 
 ### Fixed — SECURITY

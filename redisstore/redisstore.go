@@ -18,6 +18,12 @@
 //	storage := redisstore.New(redisClient, "session:")
 //	manager := session.NewManager(storage, session.DefaultConfig())
 //
+// [New] accepts any go-redis client shape -- standalone, cluster, ring or a
+// Sentinel-backed failover client. To have the package open the connection
+// instead, [NewFromConfig] takes a single server address and
+// [NewFromStorageConfig] takes a full [session.StorageConfig], which can also
+// describe a cluster or a Sentinel deployment.
+//
 // Importing this package also registers session.StorageTypeRedis with
 // session.NewStorage, for code that picks its backend from configuration:
 //
@@ -65,7 +71,9 @@ type Client interface {
 
 func init() {
 	session.RegisterStorage(session.StorageTypeRedis, func(cfg session.StorageConfig) (session.Storage, error) {
-		return NewFromConfig(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.KeyPrefix)
+		// The whole config, not four of its fields: that is what lets
+		// session.NewStorage reach a cluster or a Sentinel deployment.
+		return NewFromStorageConfig(cfg)
 	})
 }
 
@@ -91,16 +99,36 @@ func New(client Client, keyPrefix string) *Storage {
 	}
 }
 
-// NewFromConfig creates a new Redis storage using configuration.
+// NewFromConfig creates a new Redis storage for a single standalone server.
 // This is a convenience function that creates both the Redis client and
 // storage, and verifies connectivity before returning.
+//
+// Its parameters can only describe one server. For a cluster or a Sentinel
+// deployment use [NewFromStorageConfig], or build the client yourself and
+// pass it to [New] -- which has always accepted any client shape.
 func NewFromConfig(addr, password string, db int, keyPrefix string) (*Storage, error) {
-	cfg := rediskitclient.DefaultConfig().
-		WithAddr(addr).
-		WithPassword(password).
-		WithDB(db)
+	return NewFromStorageConfig(session.StorageConfig{
+		RedisAddr:     addr,
+		RedisPassword: password,
+		RedisDB:       db,
+		KeyPrefix:     keyPrefix,
+	})
+}
 
-	client, err := rediskitclient.NewClient(cfg)
+// NewFromStorageConfig creates a new Redis storage from a full
+// [session.StorageConfig], and verifies connectivity before returning.
+//
+// It builds whichever client the configuration describes: a Sentinel-backed
+// failover client when RedisMasterName is set, a cluster client when
+// RedisAddrs holds more than one address, and a single-node client otherwise.
+// [New] has always accepted any of those; this is the path that can now
+// *construct* one, so a cluster or Sentinel deployment is served end to end
+// rather than only by callers who already hold a client.
+//
+// This is also what session.NewStorage calls for StorageTypeRedis, so
+// selecting a backend from configuration reaches the same client shapes.
+func NewFromStorageConfig(cfg session.StorageConfig) (*Storage, error) {
+	client, err := rediskitclient.NewUniversalClient(clientConfig(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Redis client: %w", err)
 	}
@@ -114,7 +142,26 @@ func NewFromConfig(addr, password string, db int, keyPrefix string) (*Storage, e
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	return New(client, keyPrefix), nil
+	return New(client, cfg.KeyPrefix), nil
+}
+
+// clientConfig maps a session.StorageConfig onto the redis-kit client config
+// that decides which client shape gets built.
+//
+// Separate from NewFromStorageConfig so the mapping can be asserted without a
+// network: the alternative is a test that waits out go-redis's Sentinel
+// discovery retries to prove a field was copied.
+func clientConfig(cfg session.StorageConfig) rediskitclient.Config {
+	// Addrs is copied unconditionally. An empty one needs no guard: redis-kit
+	// falls back to Addr on len(Addrs) == 0, so a branch here would be dead
+	// code -- removing it changed no test, which is how it was found.
+	return rediskitclient.DefaultConfig().
+		WithAddr(cfg.RedisAddr).
+		WithAddrs(cfg.RedisAddrs...).
+		WithPassword(cfg.RedisPassword).
+		WithDB(cfg.RedisDB).
+		WithMasterName(cfg.RedisMasterName).
+		WithSentinelAuth(cfg.RedisSentinelUsername, cfg.RedisSentinelPassword)
 }
 
 // normalizePrefix applies fallback when prefix is empty and makes sure the

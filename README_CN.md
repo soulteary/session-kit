@@ -19,7 +19,7 @@ Go 语言会话管理库：存储后端接口与内存实现、服务端会话�
 |---|---|---|
 | `github.com/soulteary/session-kit/v3` | *（仅标准库）* | `Storage`、`MemoryStorage`、`Manager`、`SessionData`、`Store`、`KVManager`、`Config`、`CreateCookie` 及会话辅助函数 |
 | `.../v3/fiberadapter` | Fiber v3、fasthttp | `SessionConfig`、`Storage`、`Cookie`、`SameSite` |
-| `.../v3/redisstore` | go-redis、redis-kit | `Storage`、`New`、`NewFromConfig`、`Store`、`NewStore`、`Client` |
+| `.../v3/redisstore` | go-redis、redis-kit | `Storage`、`New`、`NewFromConfig`、`NewFromStorageConfig`、`Store`、`NewStore`、`Client` |
 
 使用内存会话的 net/http 服务，不会为这两个子包的存在付出任何代价。以只导入
 根包的程序实测，相比 v2.3.0：链接的包少了 97 个、模块少了 20 个、二进制
@@ -122,6 +122,26 @@ func main() {
 storage, err := redisstore.NewFromConfig("localhost:6379", "", 0, "myapp:session:")
 ```
 
+这四个参数只能描述一台服务器。集群或哨兵部署改为传入完整配置，它会按配置决定
+创建哪种客户端：
+
+```go
+// Redis 集群
+storage, err := redisstore.NewFromStorageConfig(session.DefaultStorageConfig().
+    WithRedisAddrs("10.0.0.1:6379", "10.0.0.2:6379", "10.0.0.3:6379").
+    WithKeyPrefix("myapp:session:"))
+
+// 哨兵。WithRedisSentinelAuth 是给哨兵节点本身用的凭据，
+// 它通常和背后 Redis 服务器的凭据并不相同。
+storage, err := redisstore.NewFromStorageConfig(session.DefaultStorageConfig().
+    WithRedisAddrs("10.0.0.1:26379", "10.0.0.2:26379").
+    WithRedisMasterName("mymaster").
+    WithRedisSentinelAuth("sentinel-user", "sentinel-pass").
+    WithKeyPrefix("myapp:session:"))
+```
+
+`redisstore.New` 一直就接受任意客户端形态；现在能**构造**出来的也是这一条路径。
+
 ### 由配置决定后端
 
 `NewStorage` 自己就能创建内存存储。其他后端必须先注册，对 Redis 来说就是
@@ -140,6 +160,9 @@ cfg := session.DefaultStorageConfig().
 
 storage, err := session.NewStorage(cfg)
 ```
+
+工厂会把整个配置透传下去，所以集群和哨兵字段在这里同样有效 ——
+`WithRedisAddrs`、`WithRedisMasterName`、`WithRedisSentinelAuth`。
 
 漏掉这行导入时，`NewStorage` 会直接点名告诉你，而不是报一个“未知类型”。
 `RegisterStorage` 是导出的，Memcached、DynamoDB 或自研后端都能接到同一个
@@ -312,10 +335,16 @@ cfg := session.DefaultConfig().
 cfg := session.DefaultStorageConfig().
     WithType(session.StorageTypeRedis).      // memory 或 redis
     WithKeyPrefix("session:").               // 键前缀
-    WithRedisAddr("localhost:6379").         // Redis 地址
+    WithRedisAddr("localhost:6379").         // 单台独立服务器
     WithRedisPassword("secret").             // Redis 密码
     WithRedisDB(0).                          // Redis 数据库
     WithMemoryGCInterval(10 * time.Minute)   // 内存 GC 间隔
+
+// 用集群或哨兵替代单台服务器
+cfg = cfg.
+    WithRedisAddrs("10.0.0.1:6379", "10.0.0.2:6379").  // 优先于 WithRedisAddr
+    WithRedisMasterName("mymaster").                    // 设置即走哨兵故障转移
+    WithRedisSentinelAuth("sentinel-user", "pass")      // 哨兵自身的凭据
 ```
 
 这里没有 `WithRedisClient`：配置描述的是一条该由工厂去建立的连接。手上已经

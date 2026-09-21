@@ -26,7 +26,28 @@ type StorageConfig struct {
 	KeyPrefix string
 
 	// RedisAddr is the Redis server address (for Redis storage).
+	//
+	// It names a single standalone server. For a cluster or a Sentinel
+	// deployment use RedisAddrs, which takes precedence over it.
 	RedisAddr string
+
+	// RedisAddrs is a seed list of host:port addresses, for a Redis Cluster
+	// or for the Sentinel nodes of a failover setup. When it is empty,
+	// RedisAddr is used instead.
+	RedisAddrs []string
+
+	// RedisMasterName is the Sentinel master name. Setting it selects a
+	// Sentinel-backed failover client, with RedisAddrs (or RedisAddr) read as
+	// the Sentinel addresses rather than as Redis servers.
+	RedisMasterName string
+
+	// RedisSentinelUsername and RedisSentinelPassword authenticate to the
+	// Sentinel nodes themselves. They are separate from RedisPassword, which
+	// authenticates to the Redis server Sentinel points at -- the two
+	// routinely differ, and a Sentinel deployment with ACLs is unusable
+	// without them.
+	RedisSentinelUsername string
+	RedisSentinelPassword string
 
 	// RedisPassword is the Redis password (for Redis storage).
 	RedisPassword string
@@ -66,6 +87,28 @@ func (c StorageConfig) WithKeyPrefix(prefix string) StorageConfig {
 // WithRedisAddr sets the Redis address.
 func (c StorageConfig) WithRedisAddr(addr string) StorageConfig {
 	c.RedisAddr = addr
+	return c
+}
+
+// WithRedisAddrs sets the seed list of cluster or Sentinel addresses. It takes
+// precedence over WithRedisAddr.
+func (c StorageConfig) WithRedisAddrs(addrs ...string) StorageConfig {
+	c.RedisAddrs = addrs
+	return c
+}
+
+// WithRedisMasterName sets the Sentinel master name, selecting a failover
+// client.
+func (c StorageConfig) WithRedisMasterName(name string) StorageConfig {
+	c.RedisMasterName = name
+	return c
+}
+
+// WithRedisSentinelAuth sets the credentials used against the Sentinel nodes,
+// which are not the credentials used against the Redis server behind them.
+func (c StorageConfig) WithRedisSentinelAuth(username, password string) StorageConfig {
+	c.RedisSentinelUsername = username
+	c.RedisSentinelPassword = password
 	return c
 }
 
