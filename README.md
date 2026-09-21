@@ -23,7 +23,7 @@ does not use:
 |---|---|---|
 | `github.com/soulteary/session-kit/v3` | *(standard library only)* | `Storage`, `MemoryStorage`, `Manager`, `SessionData`, `Store`, `KVManager`, `Config`, `CreateCookie` and the session helpers |
 | `.../v3/fiberadapter` | Fiber v3, fasthttp | `SessionConfig`, `Storage`, `Cookie`, `SameSite` |
-| `.../v3/redisstore` | go-redis, redis-kit | `Storage`, `New`, `NewFromConfig`, `Store`, `NewStore`, `Client` |
+| `.../v3/redisstore` | go-redis, redis-kit | `Storage`, `New`, `NewFromOptions`, `NewFromConfig`, `Options`, `Store`, `NewStore`, `Client` |
 
 A net/http service on in-memory sessions pays nothing for either subpackage
 existing. Measured for a program that imports only the root package, against
@@ -129,7 +129,49 @@ check:
 storage, err := redisstore.NewFromConfig("localhost:6379", "", 0, "myapp:session:")
 ```
 
+`NewFromConfig` reaches a standalone server only — four positional arguments
+cannot describe anything else. `NewFromOptions` can:
+
+```go
+// Cluster: two or more addresses, no master name.
+storage, err := redisstore.NewFromOptions(redisstore.Options{
+    Addrs:     []string{"10.0.0.1:6379", "10.0.0.2:6379", "10.0.0.3:6379"},
+    KeyPrefix: "myapp:session:",
+})
+
+// Sentinel: the addresses are the Sentinel nodes, not the Redis servers.
+storage, err := redisstore.NewFromOptions(redisstore.Options{
+    Addrs:            []string{"10.0.0.1:26379", "10.0.0.2:26379"},
+    MasterName:       "mymaster",
+    Password:         "the-redis-password",     // the master Sentinel points at
+    SentinelUsername: "sentinel-user",          // Sentinel itself
+    SentinelPassword: "the-sentinel-password",
+    KeyPrefix:        "myapp:session:",
+})
+```
+
+The two sets of credentials authenticate to different things and are
+frequently not the same; an ACL-protected Sentinel cannot be reached without
+`SentinelUsername`/`SentinelPassword`.
+
 ### Choosing a backend from configuration
+
+`StorageConfig` describes any of the three deployments, the same as
+`NewFromOptions`: `RedisAddr` for a single server, `RedisAddrs` for a Cluster
+or for Sentinel nodes, `RedisMasterName` to select Sentinel, and
+`RedisSentinelUsername`/`RedisSentinelPassword` for Sentinel's own ACLs.
+`RedisAddrs` wins over `RedisAddr` when both are set.
+
+```go
+cfg := session.DefaultStorageConfig().
+    WithType(session.StorageTypeRedis).
+    WithRedisAddrs("10.0.0.1:26379", "10.0.0.2:26379").
+    WithRedisMasterName("mymaster").
+    WithRedisSentinelAuth("sentinel-user", "the-sentinel-password").
+    WithKeyPrefix("myapp:session:")
+
+storage, err := session.NewStorage(cfg)
+```
 
 `NewStorage` builds memory storage on its own. Every other backend has to be
 registered first, which for Redis means importing the subpackage for its side

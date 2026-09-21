@@ -28,10 +28,33 @@ type StorageConfig struct {
 	// RedisAddr is the Redis server address (for Redis storage).
 	RedisAddr string
 
-	// RedisPassword is the Redis password (for Redis storage).
+	// RedisAddrs is a seed list of host:port addresses: the nodes of a Redis
+	// Cluster, or the Sentinel nodes of a failover setup. It is what lets a
+	// configuration-driven deployment be something other than standalone --
+	// RedisAddr alone can only name one server. When it is empty, RedisAddr
+	// is used; two or more entries with RedisMasterName empty select a
+	// cluster client.
+	RedisAddrs []string
+
+	// RedisMasterName is the Sentinel master name. Setting it selects a
+	// Sentinel-backed failover client, and RedisAddrs (or RedisAddr) is then
+	// read as the Sentinel addresses rather than as Redis servers.
+	RedisMasterName string
+
+	// RedisPassword is the Redis password (empty if no password). It
+	// authenticates to the Redis server itself -- under Sentinel, that is the
+	// master Sentinel points at, not the Sentinel nodes.
 	RedisPassword string
 
-	// RedisDB is the Redis database number (for Redis storage).
+	// RedisSentinelUsername and RedisSentinelPassword authenticate to the
+	// Sentinel nodes themselves. They are separate from RedisPassword because
+	// the two credentials frequently differ, and a Sentinel deployment with
+	// ACLs cannot be reached without them.
+	RedisSentinelUsername string
+	RedisSentinelPassword string
+
+	// RedisDB is the Redis database number (for Redis storage). Redis Cluster
+	// supports only database 0, so this is ignored there.
 	RedisDB int
 
 	// MemoryGCInterval is the garbage collection interval for memory storage.
@@ -66,6 +89,28 @@ func (c StorageConfig) WithKeyPrefix(prefix string) StorageConfig {
 // WithRedisAddr sets the Redis address.
 func (c StorageConfig) WithRedisAddr(addr string) StorageConfig {
 	c.RedisAddr = addr
+	return c
+}
+
+// WithRedisAddrs sets the seed list of cluster or Sentinel addresses. Passing
+// none clears it, which puts the configuration back on RedisAddr.
+func (c StorageConfig) WithRedisAddrs(addrs ...string) StorageConfig {
+	c.RedisAddrs = addrs
+	return c
+}
+
+// WithRedisMasterName sets the Sentinel master name, selecting a
+// Sentinel-backed failover client.
+func (c StorageConfig) WithRedisMasterName(name string) StorageConfig {
+	c.RedisMasterName = name
+	return c
+}
+
+// WithRedisSentinelAuth sets the credentials for the Sentinel nodes
+// themselves, which are not the ones [StorageConfig.WithRedisPassword] sets.
+func (c StorageConfig) WithRedisSentinelAuth(username, password string) StorageConfig {
+	c.RedisSentinelUsername = username
+	c.RedisSentinelPassword = password
 	return c
 }
 
