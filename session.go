@@ -137,8 +137,34 @@ func (m *Manager) FiberSessionConfig() fibersession.Config {
 
 // Helper functions for Fiber sessions
 
-// Authenticate marks a fiber session as authenticated.
+// Authenticate rotates the session ID and marks the fiber session as
+// authenticated.
+//
+// The rotation is the fix for a session fixation hole: this helper used to
+// write the authentication markers and save under the *existing* ID, so a
+// session ID an attacker had planted in the victim's browser before login came
+// back out of login authenticated, and the attacker's copy of that ID then
+// granted access to the victim's account. Fiber adopts a client-supplied ID
+// whenever storage holds a record for it, so planting one only takes visiting
+// the site first. The README has always listed ID rotation at login as the
+// expected hardening, but left it to every caller to remember -- and its own
+// login example did not do it.
+//
+// Regenerate runs first and its error is fatal: a session that could not be
+// rotated is left unauthenticated rather than marked authenticated under an ID
+// an attacker may already hold. Order matters for the middleware
+// (session.FromContext) path in particular, where Save is a no-op and the
+// middleware persists the session when the handler returns -- markers written
+// before a failed rotation would be saved under the old ID anyway.
+//
+// Data already set on the session (user ID, email, AMR, scopes) is carried
+// over to the new ID; only the old storage record is dropped. Callers that
+// already rotate the ID themselves stay correct, they simply rotate once more.
 func Authenticate(session *fibersession.Session) error {
+	if err := session.Regenerate(); err != nil {
+		return fmt.Errorf("failed to rotate session id on login: %w", err)
+	}
+
 	session.Set(KeyAuthenticated, true)
 	session.Set(KeyCreatedAt, time.Now().Unix())
 	return session.Save()

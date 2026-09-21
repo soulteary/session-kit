@@ -150,7 +150,10 @@ func main() {
         session.SetUserID(sess, "user-123")
         session.SetEmail(sess, "user@example.com")
         session.AddAMR(sess, "pwd")
-        session.Authenticate(sess)
+        // 先轮换会话 ID，再标记为已认证。
+        if err := session.Authenticate(sess); err != nil {
+            return err
+        }
 
         return c.SendString("登录成功")
     })
@@ -183,7 +186,9 @@ cfg := session.DefaultConfig().
 - **配置校验**：使用前调用 `cfg.Validate()`，避免无效或不安全的组合（例如
   `SameSite=None` 但未开启 `Secure=true`）。
 - **SameSite 行为**：支持 `Strict`、`Lax`、`None`、`Disabled`。只有在必须跨站请求时使用 `None`，且务必启用 `Secure=true`。
-- **登录加固**：认证成功后应轮换（重新生成）会话 ID，以防止会话固定攻击。
+- **登录加固**：`Authenticate()` 会自动轮换会话 ID，因此攻击者在登录前植入受害者浏览器的
+  会话 ID 无法在登录后继续有效（会话固定攻击）。轮换先于写入认证标记执行，失败时会返回错误：
+  请检查该错误，因为无法完成轮换的会话会被刻意保持为未认证状态。
 - **Redis 加固**：将 Redis 视为可信后端，使用网络隔离与访问控制，并在客户端设置超时避免资源耗尽。
 
 ### 存储配置
@@ -280,7 +285,7 @@ session.HasScope(sess, "read") // true
 
 ```go
 // 认证
-session.Authenticate(sess)      // 标记为已认证
+session.Authenticate(sess)      // 轮换会话 ID，并标记为已认证
 session.Unauthenticate(sess)    // 销毁会话
 session.IsAuthenticated(sess)   // 检查是否已认证
 

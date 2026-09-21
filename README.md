@@ -150,7 +150,10 @@ func main() {
         session.SetUserID(sess, "user-123")
         session.SetEmail(sess, "user@example.com")
         session.AddAMR(sess, "pwd")
-        session.Authenticate(sess)
+        // Rotates the session ID, then marks the session authenticated.
+        if err := session.Authenticate(sess); err != nil {
+            return err
+        }
 
         return c.SendString("Logged in")
     })
@@ -184,7 +187,11 @@ cfg := session.DefaultConfig().
 - **Validate configuration**: call `cfg.Validate()` before use to catch unsafe or
   invalid combinations (e.g. `SameSite=None` without `Secure=true`).
 - **SameSite behavior**: Supported values are `Strict`, `Lax`, `None`, and `Disabled`. Use `None` only when cross-site requests are required, and always with `Secure=true`.
-- **Login hardening**: After successful authentication, rotate the session ID (regenerate) to mitigate session fixation.
+- **Login hardening**: `Authenticate()` rotates the session ID for you, so a
+  session ID planted in the victim's browser before login cannot survive it
+  (session fixation). Rotation is attempted first and its failure is returned:
+  check the error, because a session that could not be rotated is deliberately
+  left unauthenticated.
 - **Redis hardening**: Treat Redis as a trusted backend—use network isolation and credentials, and add timeouts at the client layer to prevent resource exhaustion.
 
 ### Storage Config
@@ -283,7 +290,7 @@ Helper functions for working with Fiber sessions:
 
 ```go
 // Authentication
-session.Authenticate(sess)      // Mark as authenticated
+session.Authenticate(sess)      // Rotate the session ID, then mark as authenticated
 session.Unauthenticate(sess)    // Destroy session
 session.IsAuthenticated(sess)   // Check if authenticated
 
