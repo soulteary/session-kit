@@ -1,14 +1,12 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/gofiber/fiber/v3"
-	fibersession "github.com/gofiber/fiber/v3/middleware/session"
 )
 
 // failingStorage implements Storage and returns configurable errors for testing.
@@ -42,6 +40,46 @@ func (f *failingStorage) Reset() error {
 
 func (f *failingStorage) Close() error {
 	return f.Storage.Close()
+}
+
+// fakeSession is a minimal in-memory Session, standing in for a web
+// framework's session type. Exercising the helpers through it is the point of
+// Reader/Writer/ReadWriter/Saver/Session: the whole helper surface is covered
+// here without this package importing Fiber. The same helpers are run against
+// a real *fibersession.Session in the fiberadapter package's tests.
+type fakeSession struct {
+	values     map[any]any
+	saved      map[any]any
+	saveErr    error
+	destroyErr error
+	saveCalls  int
+	destroyed  bool
+}
+
+func newFakeSession() *fakeSession {
+	return &fakeSession{values: make(map[any]any)}
+}
+
+func (s *fakeSession) Get(key any) any  { return s.values[key] }
+func (s *fakeSession) Set(key, val any) { s.values[key] = val }
+func (s *fakeSession) Delete(key any)   { delete(s.values, key) }
+
+func (s *fakeSession) Save() error {
+	s.saveCalls++
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.saved = maps.Clone(s.values)
+	return nil
+}
+
+func (s *fakeSession) Destroy() error {
+	if s.destroyErr != nil {
+		return s.destroyErr
+	}
+	s.destroyed = true
+	s.values = make(map[any]any)
+	return nil
 }
 
 func TestManagerCreateSession(t *testing.T) {
@@ -126,20 +164,20 @@ func TestManagerLoadExpiredSession(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	config := DefaultConfig().WithExpiration(50 * time.Millisecond)
+	config := DefaultConfig().WithExpiration(1 * time.Hour)
 	manager := NewManager(storage, config)
 
-	// Create and save session
+	// Write an already-expired record directly: SaveSession refuses these.
 	session := manager.CreateSession("session-123")
-	err := manager.SaveSession(session)
+	session.ExpiresAt = time.Now().Add(-1 * time.Hour)
+	data, err := json.Marshal(session)
 	if err != nil {
-		t.Fatalf("failed to save session: %v", err)
+		t.Fatalf("failed to marshal session: %v", err)
+	}
+	if err := storage.Set(session.ID, data, time.Hour); err != nil {
+		t.Fatalf("failed to seed storage: %v", err)
 	}
 
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
-
-	// Load session - should be nil because it's expired
 	loaded, err := manager.LoadSession("session-123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -147,27 +185,33 @@ func TestManagerLoadExpiredSession(t *testing.T) {
 	if loaded != nil {
 		t.Error("expected nil for expired session")
 	}
+
+	// The expired record is dropped from storage on read.
+	if raw, _ := storage.Get("session-123"); raw != nil {
+		t.Error("expected the expired session to be deleted from storage")
+	}
 }
 
 func TestManagerDeleteSession(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
 
-	config := DefaultConfig()
+	config := DefaultConfig().WithExpiration(1 * time.Hour)
 	manager := NewManager(storage, config)
 
-	// Create and save session
 	session := manager.CreateSession("session-123")
-	_ = manager.SaveSession(session)
+	if err := manager.SaveSession(session); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
 
-	// Delete session
-	err := manager.DeleteSession("session-123")
-	if err != nil {
+	if err := manager.DeleteSession("session-123"); err != nil {
 		t.Fatalf("failed to delete session: %v", err)
 	}
 
-	// Verify deletion
-	loaded, _ := manager.LoadSession("session-123")
+	loaded, err := manager.LoadSession("session-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if loaded != nil {
 		t.Error("expected session to be deleted")
 	}
@@ -180,26 +224,21 @@ func TestManagerTouchSession(t *testing.T) {
 	config := DefaultConfig().WithExpiration(1 * time.Hour)
 	manager := NewManager(storage, config)
 
-	// Create and save session
 	session := manager.CreateSession("session-123")
 	originalExpiry := session.ExpiresAt
 	originalAccess := session.LastAccessedAt
-	_ = manager.SaveSession(session)
 
-	// Wait a bit
 	time.Sleep(10 * time.Millisecond)
 
-	// Touch session
-	err := manager.TouchSession(session)
-	if err != nil {
+	if err := manager.TouchSession(session); err != nil {
 		t.Fatalf("failed to touch session: %v", err)
 	}
 
-	if !session.LastAccessedAt.After(originalAccess) {
-		t.Error("expected LastAccessedAt to be updated")
-	}
 	if !session.ExpiresAt.After(originalExpiry) {
-		t.Error("expected ExpiresAt to be extended")
+		t.Error("expected expiration to be extended")
+	}
+	if !session.LastAccessedAt.After(originalAccess) {
+		t.Error("expected last access to be updated")
 	}
 }
 
@@ -224,39 +263,6 @@ func TestManagerGetConfig(t *testing.T) {
 
 	if manager.GetConfig().CookieName != "my_session" {
 		t.Errorf("expected CookieName to be 'my_session', got %s", manager.GetConfig().CookieName)
-	}
-}
-
-func TestManagerFiberSessionConfig(t *testing.T) {
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
-
-	config := DefaultConfig().
-		WithCookieName("my_session").
-		WithCookieDomain(".example.com").
-		WithCookiePath("/app").
-		WithSecure(true).
-		WithHTTPOnly(true).
-		WithSameSite("Strict").
-		WithExpiration(2 * time.Hour)
-
-	manager := NewManager(storage, config)
-	fiberCfg := manager.FiberSessionConfig()
-
-	if fiberCfg.IdleTimeout != 2*time.Hour {
-		t.Errorf("expected IdleTimeout to be 2h, got %v", fiberCfg.IdleTimeout)
-	}
-	if fiberCfg.CookieDomain != ".example.com" {
-		t.Errorf("expected CookieDomain to be '.example.com', got %s", fiberCfg.CookieDomain)
-	}
-	if fiberCfg.CookiePath != "/app" {
-		t.Errorf("expected CookiePath to be '/app', got %s", fiberCfg.CookiePath)
-	}
-	if !fiberCfg.CookieSecure {
-		t.Error("expected CookieSecure to be true")
-	}
-	if !fiberCfg.CookieHTTPOnly {
-		t.Error("expected CookieHTTPOnly to be true")
 	}
 }
 
@@ -287,20 +293,56 @@ func TestCreateCookie(t *testing.T) {
 	if !cookie.Secure {
 		t.Error("expected Secure to be true")
 	}
-	if !cookie.HTTPOnly {
-		t.Error("expected HTTPOnly to be true")
+	if !cookie.HttpOnly {
+		t.Error("expected HttpOnly to be true")
 	}
+	if cookie.Expires.IsZero() {
+		t.Error("expected Expires to be set")
+	}
+}
+
+// CreateCookie returns a *net/http.Cookie, so what it produces must survive a
+// round trip through net/http itself.
+func TestCreateCookieServesThroughNetHTTP(t *testing.T) {
+	config := DefaultConfig().
+		WithCookieName("my_session").
+		WithCookiePath("/app").
+		WithSameSite("Strict")
+
+	got := CreateCookie(config, "session-123").String()
+	for _, want := range []string{
+		"my_session=session-123",
+		"Path=/app",
+		"HttpOnly",
+		"Secure",
+		"SameSite=Strict",
+	} {
+		if !containsSubstring(got, want) {
+			t.Errorf("Set-Cookie header %q is missing %q", got, want)
+		}
+	}
+}
+
+func containsSubstring(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCreateCookieSameSiteVariants(t *testing.T) {
 	tests := []struct {
 		sameSite string
-		expected string
+		expected http.SameSite
 	}{
-		{"Strict", fiber.CookieSameSiteStrictMode},
-		{"Lax", fiber.CookieSameSiteLaxMode},
-		{"None", fiber.CookieSameSiteNoneMode},
-		{"Disabled", fiber.CookieSameSiteDisabled},
+		{"Strict", http.SameSiteStrictMode},
+		{"Lax", http.SameSiteLaxMode},
+		{"None", http.SameSiteNoneMode},
+		{"Disabled", http.SameSiteDefaultMode},
+		{"", http.SameSiteLaxMode},
+		{"nonsense", http.SameSiteLaxMode},
 	}
 
 	for _, tt := range tests {
@@ -310,281 +352,251 @@ func TestCreateCookieSameSiteVariants(t *testing.T) {
 			if cookie.SameSite != tt.expected {
 				t.Errorf("expected SameSite to be %v, got %v", tt.expected, cookie.SameSite)
 			}
-		})
-	}
-}
-
-func TestFiberSessionHelpers(t *testing.T) {
-	app := fiber.New()
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
-
-	store := fibersession.NewStore(fibersession.Config{
-		Storage:     fiberStorageAdapter{storage: storage},
-		IdleTimeout: 1 * time.Hour,
-	})
-
-	// Test route
-	app.Get("/test", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-
-		// Test IsAuthenticated - should be false initially
-		if IsAuthenticated(sess) {
-			return c.SendString("should not be authenticated")
-		}
-
-		// Test SetUserID and GetUserID
-		SetUserID(sess, "user-123")
-		if GetUserID(sess) != "user-123" {
-			return c.SendString("user id mismatch")
-		}
-
-		// Test SetEmail and GetEmail
-		SetEmail(sess, "test@example.com")
-		if GetEmail(sess) != "test@example.com" {
-			return c.SendString("email mismatch")
-		}
-
-		// Test SetPhone and GetPhone
-		SetPhone(sess, "+1234567890")
-		if GetPhone(sess) != "+1234567890" {
-			return c.SendString("phone mismatch")
-		}
-
-		// Test AMR
-		SetAMR(sess, []string{"pwd"})
-		amr := GetAMR(sess)
-		if len(amr) != 1 || amr[0] != "pwd" {
-			return c.SendString("amr mismatch")
-		}
-
-		AddAMR(sess, "otp")
-		if !HasAMR(sess, "otp") {
-			return c.SendString("should have otp amr")
-		}
-
-		// Adding duplicate should not add
-		AddAMR(sess, "otp")
-		amr = GetAMR(sess)
-		if len(amr) != 2 {
-			return c.SendString("duplicate amr added")
-		}
-
-		// Test Scopes
-		SetScopes(sess, []string{"read"})
-		scopes := GetScopes(sess)
-		if len(scopes) != 1 || scopes[0] != "read" {
-			return c.SendString("scopes mismatch")
-		}
-
-		if !HasScope(sess, "read") {
-			return c.SendString("should have read scope")
-		}
-
-		if HasScope(sess, "write") {
-			return c.SendString("should not have write scope")
-		}
-
-		// Test UpdateLastAccess
-		UpdateLastAccess(sess)
-		lastAccess := GetLastAccess(sess)
-		if lastAccess.IsZero() {
-			return c.SendString("last access should be set")
-		}
-
-		// Test Authenticate
-		err = Authenticate(sess)
-		if err != nil {
-			return err
-		}
-
-		if !IsAuthenticated(sess) {
-			return c.SendString("should be authenticated")
-		}
-
-		// Check created at
-		createdAt := GetCreatedAt(sess)
-		if createdAt.IsZero() {
-			return c.SendString("created at should be set")
-		}
-
-		return c.SendString("ok")
-	})
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatalf("failed to test: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-}
-
-func TestFiberSessionUnauthenticate(t *testing.T) {
-	app := fiber.New()
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
-
-	store := fibersession.NewStore(fibersession.Config{
-		Storage:     fiberStorageAdapter{storage: storage},
-		IdleTimeout: 1 * time.Hour,
-	})
-
-	var sessionCookie string
-
-	// First request: login and get session cookie
-	app.Get("/login", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-
-		err = Authenticate(sess)
-		if err != nil {
-			return err
-		}
-
-		return c.SendString("logged in")
-	})
-
-	// Second endpoint: logout using the session from cookie
-	app.Get("/logout", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-
-		// Check if authenticated
-		if !IsAuthenticated(sess) {
-			return c.SendString("not authenticated")
-		}
-
-		// Unauthenticate - clears session data and destroys
-		err = Unauthenticate(sess)
-		if err != nil {
-			return err
-		}
-
-		return c.SendString("logged out")
-	})
-
-	// Step 1: Login
-	loginReq := httptest.NewRequest("GET", "/login", nil)
-	loginResp, err := app.Test(loginReq)
-	if err != nil {
-		t.Fatalf("failed to test login: %v", err)
-	}
-	if loginResp.StatusCode != 200 {
-		t.Errorf("expected login status 200, got %d", loginResp.StatusCode)
-	}
-
-	// Extract session cookie
-	for _, cookie := range loginResp.Cookies() {
-		if cookie.Name == "session_id" {
-			sessionCookie = cookie.Value
-			break
-		}
-	}
-
-	// Step 2: Logout with session cookie
-	logoutReq := httptest.NewRequest("GET", "/logout", nil)
-	if sessionCookie != "" {
-		logoutReq.AddCookie(&http.Cookie{Name: "session_id", Value: sessionCookie})
-	}
-	logoutResp, err := app.Test(logoutReq)
-	if err != nil {
-		t.Fatalf("failed to test logout: %v", err)
-	}
-	if logoutResp.StatusCode != 200 {
-		t.Errorf("expected logout status 200, got %d", logoutResp.StatusCode)
-	}
-}
-
-func TestFiberSessionGettersWithNilValues(t *testing.T) {
-	app := fiber.New()
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
-
-	store := fibersession.NewStore(fibersession.Config{
-		Storage:     fiberStorageAdapter{storage: storage},
-		IdleTimeout: 1 * time.Hour,
-	})
-
-	app.Get("/test-nil", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-
-		// All getters should return empty/nil for unset values
-		if GetUserID(sess) != "" {
-			return c.SendString("expected empty user id")
-		}
-		if GetEmail(sess) != "" {
-			return c.SendString("expected empty email")
-		}
-		if GetPhone(sess) != "" {
-			return c.SendString("expected empty phone")
-		}
-		if GetAMR(sess) != nil {
-			return c.SendString("expected nil amr")
-		}
-		if GetScopes(sess) != nil {
-			return c.SendString("expected nil scopes")
-		}
-		if !GetLastAccess(sess).IsZero() {
-			return c.SendString("expected zero last access")
-		}
-		if !GetCreatedAt(sess).IsZero() {
-			return c.SendString("expected zero created at")
-		}
-		if HasAMR(sess, "pwd") {
-			return c.SendString("expected no amr")
-		}
-		if HasScope(sess, "read") {
-			return c.SendString("expected no scope")
-		}
-
-		return c.SendString("ok")
-	})
-
-	req := httptest.NewRequest("GET", "/test-nil", nil)
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatalf("failed to test: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-}
-
-func TestFiberSessionConfigSameSiteVariants(t *testing.T) {
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
-
-	tests := []struct {
-		sameSite string
-		expected string
-	}{
-		{"Strict", fiber.CookieSameSiteStrictMode},
-		{"Lax", fiber.CookieSameSiteLaxMode},
-		{"None", fiber.CookieSameSiteNoneMode},
-		{"Disabled", fiber.CookieSameSiteDisabled},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.sameSite, func(t *testing.T) {
-			config := DefaultConfig().WithSameSite(tt.sameSite)
-			manager := NewManager(storage, config)
-			fiberCfg := manager.FiberSessionConfig()
-			if fiberCfg.CookieSameSite != tt.expected {
-				t.Errorf("expected SameSite to be %v, got %v", tt.expected, fiberCfg.CookieSameSite)
+			if config.SameSiteMode() != tt.expected {
+				t.Errorf("SameSiteMode() = %v, want %v", config.SameSiteMode(), tt.expected)
 			}
 		})
+	}
+}
+
+// "Disabled" must omit the attribute rather than emit one browsers ignore.
+func TestCreateCookieSameSiteDisabledOmitsAttribute(t *testing.T) {
+	config := DefaultConfig().WithSameSite("Disabled")
+	if got := CreateCookie(config, "sid").String(); containsSubstring(got, "SameSite") {
+		t.Errorf("Set-Cookie header %q still carries a SameSite attribute", got)
+	}
+}
+
+func TestSessionHelpers(t *testing.T) {
+	sess := newFakeSession()
+
+	if IsAuthenticated(sess) {
+		t.Error("a fresh session must not be authenticated")
+	}
+
+	SetUserID(sess, "user-123")
+	if got := GetUserID(sess); got != "user-123" {
+		t.Errorf("GetUserID() = %q, want %q", got, "user-123")
+	}
+
+	SetEmail(sess, "test@example.com")
+	if got := GetEmail(sess); got != "test@example.com" {
+		t.Errorf("GetEmail() = %q, want %q", got, "test@example.com")
+	}
+
+	SetPhone(sess, "+1234567890")
+	if got := GetPhone(sess); got != "+1234567890" {
+		t.Errorf("GetPhone() = %q, want %q", got, "+1234567890")
+	}
+
+	SetAMR(sess, []string{"pwd"})
+	if amr := GetAMR(sess); len(amr) != 1 || amr[0] != "pwd" {
+		t.Errorf("GetAMR() = %v, want [pwd]", amr)
+	}
+
+	AddAMR(sess, "otp")
+	if !HasAMR(sess, "otp") {
+		t.Error("HasAMR(otp) = false after AddAMR(otp)")
+	}
+
+	AddAMR(sess, "otp") // duplicates are ignored
+	if amr := GetAMR(sess); len(amr) != 2 {
+		t.Errorf("GetAMR() = %v after a duplicate AddAMR, want two entries", amr)
+	}
+
+	SetScopes(sess, []string{"read"})
+	if scopes := GetScopes(sess); len(scopes) != 1 || scopes[0] != "read" {
+		t.Errorf("GetScopes() = %v, want [read]", scopes)
+	}
+	if !HasScope(sess, "read") {
+		t.Error("HasScope(read) = false")
+	}
+	if HasScope(sess, "write") {
+		t.Error("HasScope(write) = true")
+	}
+
+	UpdateLastAccess(sess)
+	if GetLastAccess(sess).IsZero() {
+		t.Error("GetLastAccess() is zero after UpdateLastAccess")
+	}
+
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+	if !IsAuthenticated(sess) {
+		t.Error("IsAuthenticated() = false after Authenticate")
+	}
+	if GetCreatedAt(sess).IsZero() {
+		t.Error("GetCreatedAt() is zero after Authenticate")
+	}
+	if sess.saveCalls != 1 {
+		t.Errorf("Authenticate() called Save %d times, want 1", sess.saveCalls)
+	}
+}
+
+func TestAuthenticateReportsSaveFailure(t *testing.T) {
+	sess := newFakeSession()
+	sess.saveErr = errors.New("save failed")
+
+	if err := Authenticate(sess); err == nil {
+		t.Error("Authenticate() returned nil although Save failed")
+	}
+}
+
+func TestUnauthenticate(t *testing.T) {
+	sess := newFakeSession()
+	SetUserID(sess, "user-123")
+	SetEmail(sess, "test@example.com")
+	SetScopes(sess, []string{"read"})
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+
+	if err := Unauthenticate(sess); err != nil {
+		t.Fatalf("Unauthenticate() error = %v", err)
+	}
+	if !sess.destroyed {
+		t.Error("Unauthenticate() did not destroy the session")
+	}
+	// Destroy succeeded, so the cleared state is not also written back.
+	if sess.saveCalls != 1 {
+		t.Errorf("Save called %d times, want 1 (Authenticate only)", sess.saveCalls)
+	}
+	if IsAuthenticated(sess) {
+		t.Error("the session is still authenticated after Unauthenticate")
+	}
+}
+
+// A failing Destroy must leave a de-authenticated session behind rather than a
+// fully authenticated one: the cleared state is persisted as the fallback.
+func TestUnauthenticateSavesWhenDestroyFails(t *testing.T) {
+	sess := newFakeSession()
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+	SetUserID(sess, "user-123")
+	sess.destroyErr = errors.New("destroy failed")
+
+	err := Unauthenticate(sess)
+	if err == nil {
+		t.Fatal("Unauthenticate() returned nil although Destroy failed")
+	}
+	if !errors.Is(err, sess.destroyErr) {
+		t.Errorf("Unauthenticate() error = %v, want it to wrap the destroy error", err)
+	}
+	if sess.saveCalls != 2 {
+		t.Errorf("Save called %d times, want 2 (Authenticate plus the fallback)", sess.saveCalls)
+	}
+	if authenticated, _ := sess.saved[KeyAuthenticated].(bool); authenticated {
+		t.Error("the persisted session is still authenticated after a failed destroy")
+	}
+	if _, ok := sess.saved[KeyUserID]; ok {
+		t.Error("the persisted session still carries the user id after a failed destroy")
+	}
+}
+
+func TestUnauthenticateReportsBothFailures(t *testing.T) {
+	sess := newFakeSession()
+	sess.destroyErr = errors.New("destroy failed")
+	sess.saveErr = errors.New("save failed")
+
+	err := Unauthenticate(sess)
+	if err == nil {
+		t.Fatal("Unauthenticate() returned nil although both Destroy and Save failed")
+	}
+	if !containsSubstring(err.Error(), "destroy failed") || !containsSubstring(err.Error(), "save failed") {
+		t.Errorf("Unauthenticate() error = %v, want both failures named", err)
+	}
+}
+
+func TestUnauthenticateNilSession(t *testing.T) {
+	// Unauthenticate should handle nil session gracefully
+	if err := Unauthenticate(nil); err != nil {
+		t.Errorf("expected no error for nil session, got %v", err)
+	}
+}
+
+// Session is an interface, so the nil that reaches Unauthenticate in practice
+// is a nil *Session inside a non-nil interface -- from an unassigned field, or
+// a helper that returned early on an error. A plain session == nil misses it
+// and the next Set panics.
+func TestUnauthenticateTypedNilSession(t *testing.T) {
+	var sess *fakeSession
+	if err := Unauthenticate(sess); err != nil {
+		t.Errorf("Unauthenticate(typed nil) error = %v, want nil", err)
+	}
+}
+
+func TestSessionGettersWithNilValues(t *testing.T) {
+	sess := newFakeSession()
+
+	if got := GetUserID(sess); got != "" {
+		t.Errorf("GetUserID() = %q, want empty", got)
+	}
+	if got := GetEmail(sess); got != "" {
+		t.Errorf("GetEmail() = %q, want empty", got)
+	}
+	if got := GetPhone(sess); got != "" {
+		t.Errorf("GetPhone() = %q, want empty", got)
+	}
+	if got := GetAMR(sess); got != nil {
+		t.Errorf("GetAMR() = %v, want nil", got)
+	}
+	if got := GetScopes(sess); got != nil {
+		t.Errorf("GetScopes() = %v, want nil", got)
+	}
+	if !GetLastAccess(sess).IsZero() {
+		t.Error("GetLastAccess() is not zero on a fresh session")
+	}
+	if !GetCreatedAt(sess).IsZero() {
+		t.Error("GetCreatedAt() is not zero on a fresh session")
+	}
+	if HasAMR(sess, "pwd") {
+		t.Error("HasAMR(pwd) = true on a fresh session")
+	}
+	if HasScope(sess, "read") {
+		t.Error("HasScope(read) = true on a fresh session")
+	}
+	if IsAuthenticated(sess) {
+		t.Error("IsAuthenticated() = true on a fresh session")
+	}
+}
+
+func TestSessionGettersWithWrongTypes(t *testing.T) {
+	sess := newFakeSession()
+
+	sess.Set(KeyUserID, 123)         // should be string
+	sess.Set(KeyEmail, 456)          // should be string
+	sess.Set(KeyPhone, 789)          // should be string
+	sess.Set(KeyAMR, "not-slice")    // should be []string
+	sess.Set(KeyScopes, 999)         // should be []string
+	sess.Set(KeyLastAccess, "nope")  // should be int64
+	sess.Set(KeyCreatedAt, "nope")   // should be int64
+	sess.Set(KeyAuthenticated, "no") // should be bool
+
+	if got := GetUserID(sess); got != "" {
+		t.Errorf("GetUserID() = %q, want empty for a wrong-typed value", got)
+	}
+	if got := GetEmail(sess); got != "" {
+		t.Errorf("GetEmail() = %q, want empty for a wrong-typed value", got)
+	}
+	if got := GetPhone(sess); got != "" {
+		t.Errorf("GetPhone() = %q, want empty for a wrong-typed value", got)
+	}
+	if got := GetAMR(sess); got != nil {
+		t.Errorf("GetAMR() = %v, want nil for a wrong-typed value", got)
+	}
+	if got := GetScopes(sess); got != nil {
+		t.Errorf("GetScopes() = %v, want nil for a wrong-typed value", got)
+	}
+	if !GetLastAccess(sess).IsZero() {
+		t.Error("GetLastAccess() is not zero for a wrong-typed value")
+	}
+	if !GetCreatedAt(sess).IsZero() {
+		t.Error("GetCreatedAt() is not zero for a wrong-typed value")
+	}
+	if IsAuthenticated(sess) {
+		t.Error("IsAuthenticated() = true for a wrong-typed value")
 	}
 }
 
@@ -616,71 +628,6 @@ func TestManagerSaveSessionRefusesExpired(t *testing.T) {
 	}
 }
 
-func TestFiberSessionGettersWithWrongTypes(t *testing.T) {
-	app := fiber.New()
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
-
-	store := fibersession.NewStore(fibersession.Config{
-		Storage:     fiberStorageAdapter{storage: storage},
-		IdleTimeout: 1 * time.Hour,
-	})
-
-	app.Get("/test-wrong-types", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-
-		// Set wrong types for all keys
-		sess.Set(KeyUserID, 123)      // Should be string
-		sess.Set(KeyEmail, 456)       // Should be string
-		sess.Set(KeyPhone, 789)       // Should be string
-		sess.Set(KeyAMR, "not-slice") // Should be []string
-		sess.Set(KeyScopes, 999)      // Should be []string
-		sess.Set(KeyLastAccess, "not-int64")
-		sess.Set(KeyCreatedAt, "not-int64")
-		sess.Set(KeyAuthenticated, "not-bool")
-
-		// All getters should return empty/default values
-		if GetUserID(sess) != "" {
-			return c.SendString("expected empty user id for wrong type")
-		}
-		if GetEmail(sess) != "" {
-			return c.SendString("expected empty email for wrong type")
-		}
-		if GetPhone(sess) != "" {
-			return c.SendString("expected empty phone for wrong type")
-		}
-		if GetAMR(sess) != nil {
-			return c.SendString("expected nil amr for wrong type")
-		}
-		if GetScopes(sess) != nil {
-			return c.SendString("expected nil scopes for wrong type")
-		}
-		if !GetLastAccess(sess).IsZero() {
-			return c.SendString("expected zero last access for wrong type")
-		}
-		if !GetCreatedAt(sess).IsZero() {
-			return c.SendString("expected zero created at for wrong type")
-		}
-		if IsAuthenticated(sess) {
-			return c.SendString("expected not authenticated for wrong type")
-		}
-
-		return c.SendString("ok")
-	})
-
-	req := httptest.NewRequest("GET", "/test-wrong-types", nil)
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatalf("failed to test: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-}
-
 func TestManagerLoadSessionWithError(t *testing.T) {
 	storage := NewMemoryStorage("test:", 0)
 	defer func() { _ = storage.Close() }()
@@ -695,14 +642,6 @@ func TestManagerLoadSessionWithError(t *testing.T) {
 	_, err := manager.LoadSession("invalid-json")
 	if err == nil {
 		t.Error("expected error for invalid JSON session data")
-	}
-}
-
-func TestUnauthenticateNilSession(t *testing.T) {
-	// Unauthenticate should handle nil session gracefully
-	err := Unauthenticate(nil)
-	if err != nil {
-		t.Errorf("expected no error for nil session, got %v", err)
 	}
 }
 
@@ -769,23 +708,33 @@ func TestCreateCookieSameSiteNoneForcesSecure(t *testing.T) {
 	if !cookie.Secure {
 		t.Error("expected Cookie Secure to be true when SameSite is None")
 	}
-	if cookie.SameSite != fiber.CookieSameSiteNoneMode {
-		t.Errorf("expected SameSite none, got %s", cookie.SameSite)
+	if cookie.SameSite != http.SameSiteNoneMode {
+		t.Errorf("expected SameSite none, got %v", cookie.SameSite)
+	}
+	if !config.CookieSecure() {
+		t.Error("CookieSecure() = false for SameSite=None")
 	}
 }
 
-func TestFiberSessionConfigSameSiteNoneForcesSecure(t *testing.T) {
-	storage := NewMemoryStorage("test:", 0)
-	defer func() { _ = storage.Close() }()
+// valueSession is a Session that is not a pointer, so reflect reports a kind
+// with no nil to speak of. It must be treated as present, not as nil.
+type valueSession struct {
+	values map[any]any
+}
 
-	config := DefaultConfig().
-		WithSameSite("None").
-		WithSecure(false)
+func (s valueSession) Get(key any) any  { return s.values[key] }
+func (s valueSession) Set(key, val any) { s.values[key] = val }
+func (s valueSession) Delete(key any)   { delete(s.values, key) }
+func (s valueSession) Save() error      { return nil }
+func (s valueSession) Destroy() error   { clear(s.values); return nil }
 
-	manager := NewManager(storage, config)
-	fiberCfg := manager.FiberSessionConfig()
+func TestUnauthenticateValueSession(t *testing.T) {
+	sess := valueSession{values: map[any]any{KeyAuthenticated: true, KeyUserID: "user-123"}}
 
-	if !fiberCfg.CookieSecure {
-		t.Error("expected CookieSecure to be true when SameSite is None")
+	if err := Unauthenticate(sess); err != nil {
+		t.Fatalf("Unauthenticate() error = %v", err)
+	}
+	if IsAuthenticated(sess) {
+		t.Error("the session is still authenticated after Unauthenticate")
 	}
 }
