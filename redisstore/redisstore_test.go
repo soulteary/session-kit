@@ -1,4 +1,4 @@
-package session
+package redisstore
 
 import (
 	"testing"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	session "github.com/soulteary/session-kit/v3"
 )
 
 func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
@@ -22,12 +24,12 @@ func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	return mr, client
 }
 
-func TestRedisStorageBasicOperations(t *testing.T) {
+func TestStorageBasicOperations(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Test Set and Get
 	key := "session1"
@@ -62,12 +64,12 @@ func TestRedisStorageBasicOperations(t *testing.T) {
 	}
 }
 
-func TestRedisStorageGetNonExistent(t *testing.T) {
+func TestStorageGetNonExistent(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	got, err := storage.Get("nonexistent")
 	if err != nil {
@@ -78,12 +80,12 @@ func TestRedisStorageGetNonExistent(t *testing.T) {
 	}
 }
 
-func TestRedisStorageEmptyKeyValue(t *testing.T) {
+func TestStorageEmptyKeyValue(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Empty key should be ignored
 	err := storage.Set("", []byte("value"), time.Hour)
@@ -98,12 +100,12 @@ func TestRedisStorageEmptyKeyValue(t *testing.T) {
 	}
 }
 
-func TestRedisStorageNoExpiration(t *testing.T) {
+func TestStorageNoExpiration(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	key := "persistent"
 	value := []byte("test")
@@ -123,12 +125,12 @@ func TestRedisStorageNoExpiration(t *testing.T) {
 	}
 }
 
-func TestRedisStorageReset(t *testing.T) {
+func TestStorageReset(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Add some data
 	_ = storage.Set("key1", []byte("value1"), time.Hour)
@@ -148,35 +150,35 @@ func TestRedisStorageReset(t *testing.T) {
 	}
 }
 
-func TestRedisStorageKeyPrefix(t *testing.T) {
+func TestStorageKeyPrefix(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
 	// Test with colon
-	storage1 := NewRedisStorage(client, "prefix:")
-	if storage1.GetKeyPrefix() != "prefix:" {
-		t.Errorf("expected prefix 'prefix:', got %s", storage1.GetKeyPrefix())
+	storage1 := New(client, "prefix:")
+	if storage1.KeyPrefix() != "prefix:" {
+		t.Errorf("expected prefix 'prefix:', got %s", storage1.KeyPrefix())
 	}
 
 	// Test without colon (should add it)
-	storage2 := NewRedisStorage(client, "prefix")
-	if storage2.GetKeyPrefix() != "prefix:" {
-		t.Errorf("expected prefix 'prefix:', got %s", storage2.GetKeyPrefix())
+	storage2 := New(client, "prefix")
+	if storage2.KeyPrefix() != "prefix:" {
+		t.Errorf("expected prefix 'prefix:', got %s", storage2.KeyPrefix())
 	}
 
 	// Test empty prefix (should use default)
-	storage3 := NewRedisStorage(client, "")
-	if storage3.GetKeyPrefix() != "session:" {
-		t.Errorf("expected prefix 'session:', got %s", storage3.GetKeyPrefix())
+	storage3 := New(client, "")
+	if storage3.KeyPrefix() != "session:" {
+		t.Errorf("expected prefix 'session:', got %s", storage3.KeyPrefix())
 	}
 }
 
-func TestRedisStorageClose(t *testing.T) {
+func TestStorageClose(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	err := storage.Close()
 	if err != nil {
@@ -184,24 +186,24 @@ func TestRedisStorageClose(t *testing.T) {
 	}
 }
 
-func TestRedisStorageGetClient(t *testing.T) {
+func TestStorageClient(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
-	if storage.GetClient() != client {
-		t.Error("expected GetClient to return the same client")
+	if storage.Client() != client {
+		t.Error("expected Client() to return the same client")
 	}
 }
 
-func TestRedisStorageExists(t *testing.T) {
+func TestStorageExists(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Key should not exist
 	exists, err := storage.Exists("nonexistent")
@@ -225,17 +227,17 @@ func TestRedisStorageExists(t *testing.T) {
 	}
 }
 
-func TestRedisStorageGetTTL(t *testing.T) {
+func TestStorageTTL(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Set with expiration
 	_ = storage.Set("expiring", []byte("value"), 1*time.Hour)
 
-	ttl, err := storage.GetTTL("expiring")
+	ttl, err := storage.TTL("expiring")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,7 +246,7 @@ func TestRedisStorageGetTTL(t *testing.T) {
 	}
 
 	// Non-existent key - Redis returns -2 (as nanoseconds in go-redis)
-	ttl, err = storage.GetTTL("nonexistent")
+	ttl, err = storage.TTL("nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,12 +256,12 @@ func TestRedisStorageGetTTL(t *testing.T) {
 	}
 }
 
-func TestRedisStorageExpire(t *testing.T) {
+func TestStorageExpire(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Set with no expiration
 	_ = storage.Set("key", []byte("value"), 0)
@@ -271,14 +273,14 @@ func TestRedisStorageExpire(t *testing.T) {
 	}
 
 	// Check TTL
-	ttl, _ := storage.GetTTL("key")
+	ttl, _ := storage.TTL("key")
 	if ttl <= 0 {
 		t.Errorf("expected positive TTL after Expire, got %v", ttl)
 	}
 }
 
-func TestRedisStorageNilClient(t *testing.T) {
-	storage := &RedisStorage{client: nil, keyPrefix: "test:"}
+func TestStorageNilClient(t *testing.T) {
+	storage := &Storage{client: nil, keyPrefix: "test:"}
 
 	// All operations should return error
 	_, err := storage.Get("key")
@@ -306,9 +308,9 @@ func TestRedisStorageNilClient(t *testing.T) {
 		t.Error("expected error for nil client on Exists")
 	}
 
-	_, err = storage.GetTTL("key")
+	_, err = storage.TTL("key")
 	if err == nil {
-		t.Error("expected error for nil client on GetTTL")
+		t.Error("expected error for nil client on TTL")
 	}
 
 	err = storage.Expire("key", time.Hour)
@@ -323,14 +325,14 @@ func TestRedisStorageNilClient(t *testing.T) {
 	}
 }
 
-func TestNewRedisStorageFromConfig(t *testing.T) {
+func TestNewFromConfig(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
 	}
 	defer mr.Close()
 
-	storage, err := NewRedisStorageFromConfig(mr.Addr(), "", 0, "test:")
+	storage, err := NewFromConfig(mr.Addr(), "", 0, "test:")
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
@@ -351,34 +353,44 @@ func TestNewRedisStorageFromConfig(t *testing.T) {
 	}
 }
 
-func TestNewRedisStorageFromConfigError(t *testing.T) {
+func TestNewFromConfigError(t *testing.T) {
 	// Invalid address should fail
-	_, err := NewRedisStorageFromConfig("invalid:99999", "", 0, "test:")
+	_, err := NewFromConfig("invalid:99999", "", 0, "test:")
 	if err == nil {
 		t.Error("expected error for invalid address")
 	}
 }
 
-func TestNewStorageWithRedisClient(t *testing.T) {
-	mr, client := setupMiniRedis(t)
+// Importing this package is what teaches session.NewStorage about Redis. The
+// root package cannot test this: it would have to import the subpackage, which
+// is exactly the dependency the split removes.
+func TestNewStorageResolvesTheRegisteredRedisBackend(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
 	defer mr.Close()
-	defer func() { _ = client.Close() }()
 
-	cfg := DefaultStorageConfig().
-		WithType(StorageTypeRedis).
-		WithRedisClient(client).
+	cfg := session.DefaultStorageConfig().
+		WithType(session.StorageTypeRedis).
+		WithRedisAddr(mr.Addr()).
 		WithKeyPrefix("test:")
 
-	storage, err := NewStorage(cfg)
+	storage, err := session.NewStorage(cfg)
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
 	defer func() { _ = storage.Close() }()
 
-	// Verify it works
-	err = storage.Set("test", []byte("value"), time.Hour)
-	if err != nil {
+	if _, ok := storage.(*Storage); !ok {
+		t.Errorf("NewStorage() returned %T, want *redisstore.Storage", storage)
+	}
+
+	if err := storage.Set("test", []byte("value"), time.Hour); err != nil {
 		t.Fatalf("failed to set: %v", err)
+	}
+	if got, err := storage.Get("test"); err != nil || string(got) != "value" {
+		t.Errorf("Get() = (%q, %v), want (\"value\", nil)", got, err)
 	}
 }
 
@@ -389,7 +401,7 @@ func TestNewStorageFromEnvRedis(t *testing.T) {
 	}
 	defer mr.Close()
 
-	storage, err := NewStorageFromEnv(true, mr.Addr(), "", 0, "test:")
+	storage, err := session.NewStorageFromEnv(true, mr.Addr(), "", 0, "test:")
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
@@ -402,12 +414,93 @@ func TestNewStorageFromEnvRedis(t *testing.T) {
 	}
 }
 
-func TestRedisStorageResetEmpty(t *testing.T) {
+// A *redis.ClusterClient satisfies Client just as a *redis.Client does, which
+// is the point of taking an interface: a Cluster or Sentinel deployment no
+// longer needs a storage of its own. Nothing here talks to a cluster -- the
+// assertion is that it compiles and that New accepts it.
+func TestClientAcceptsEveryGoRedisClientShape(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	clients := map[string]Client{
+		"Client":        redis.NewClient(&redis.Options{Addr: mr.Addr()}),
+		"ClusterClient": redis.NewClusterClient(&redis.ClusterOptions{Addrs: []string{mr.Addr()}}),
+		"Ring":          redis.NewRing(&redis.RingOptions{Addrs: map[string]string{"one": mr.Addr()}}),
+		"Universal":     redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{mr.Addr()}}),
+	}
+
+	for name, client := range clients {
+		t.Run(name, func(t *testing.T) {
+			storage := New(client, "shapes:")
+			defer func() { _ = storage.Close() }()
+
+			if err := storage.Set(name, []byte("value"), time.Minute); err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			got, err := storage.Get(name)
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if string(got) != "value" {
+				t.Errorf("Get() = %q, want \"value\"", got)
+			}
+		})
+	}
+}
+
+// Client is an interface, so the nil that reaches these methods in practice is
+// a nil *redis.Client inside a non-nil interface. A plain client == nil misses
+// it and the next command panics.
+func TestStorageTypedNilClient(t *testing.T) {
+	var client *redis.Client
+	storage := New(client, "test:")
+
+	if _, err := storage.Get("key"); err == nil {
+		t.Error("Get() on a typed-nil client returned no error")
+	}
+	if err := storage.Set("key", []byte("v"), time.Hour); err == nil {
+		t.Error("Set() on a typed-nil client returned no error")
+	}
+	if err := storage.Close(); err != nil {
+		t.Errorf("Close() on a typed-nil client error = %v, want nil", err)
+	}
+}
+
+// A Client that hides Close -- a deliberately shared handle, say -- is not an
+// error: the storage never owned that connection.
+func TestStorageCloseIgnoresANonClosingClient(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = client.Close() }()
+
+	storage := New(noCloseClient{Client: client}, "test:")
+	if err := storage.Close(); err != nil {
+		t.Errorf("Close() error = %v, want nil", err)
+	}
+
+	// The wrapped connection is still usable.
+	if err := storage.Set("k", []byte("v"), time.Minute); err != nil {
+		t.Errorf("Set() after Close() error = %v", err)
+	}
+}
+
+// noCloseClient is a Client with no Close method of its own.
+type noCloseClient struct{ Client }
+
+func TestStorageResetEmpty(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Reset with no keys should work
 	err := storage.Reset()
@@ -416,22 +509,22 @@ func TestRedisStorageResetEmpty(t *testing.T) {
 	}
 }
 
-func TestRedisStorageCloseWithError(t *testing.T) {
+func TestStorageCloseWithError(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	mr.Close() // Close miniredis first
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Close should still work (may or may not error depending on client state)
 	_ = storage.Close()
 }
 
-func TestRedisStorageWithExpiration(t *testing.T) {
+func TestStorageWithExpiration(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Set with positive expiration
 	err := storage.Set("key1", []byte("value"), 1*time.Hour)
@@ -446,12 +539,12 @@ func TestRedisStorageWithExpiration(t *testing.T) {
 	}
 }
 
-func TestRedisStorageSetNoExpiration(t *testing.T) {
+func TestStorageSetNoExpiration(t *testing.T) {
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client, "test:")
+	storage := New(client, "test:")
 
 	// Set with 0 expiration (no TTL)
 	err := storage.Set("persistent", []byte("value"), 0)
@@ -460,7 +553,7 @@ func TestRedisStorageSetNoExpiration(t *testing.T) {
 	}
 
 	// Check TTL is -1 (no expiration)
-	ttl, _ := storage.GetTTL("persistent")
+	ttl, _ := storage.TTL("persistent")
 	if ttl != -1*time.Second && ttl != -1*time.Nanosecond {
 		// miniredis may return -1ns or actual TTL check
 		got, _ := storage.Get("persistent")

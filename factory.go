@@ -2,9 +2,8 @@ package session
 
 import (
 	"fmt"
+	"sync"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // StorageType represents the type of storage backend.
@@ -13,7 +12,8 @@ type StorageType string
 const (
 	// StorageTypeMemory uses in-memory storage.
 	StorageTypeMemory StorageType = "memory"
-	// StorageTypeRedis uses Redis storage.
+	// StorageTypeRedis uses Redis storage. It is registered by importing
+	// github.com/soulteary/session-kit/v3/redisstore; see [NewStorage].
 	StorageTypeRedis StorageType = "redis"
 )
 
@@ -33,10 +33,6 @@ type StorageConfig struct {
 
 	// RedisDB is the Redis database number (for Redis storage).
 	RedisDB int
-
-	// RedisClient is an existing Redis client (for Redis storage).
-	// If provided, RedisAddr, RedisPassword, and RedisDB are ignored.
-	RedisClient *redis.Client
 
 	// MemoryGCInterval is the garbage collection interval for memory storage.
 	// Default: 10 minutes. Set to 0 to disable GC.
@@ -85,39 +81,91 @@ func (c StorageConfig) WithRedisDB(db int) StorageConfig {
 	return c
 }
 
-// WithRedisClient sets an existing Redis client.
-func (c StorageConfig) WithRedisClient(client *redis.Client) StorageConfig {
-	c.RedisClient = client
-	return c
-}
-
 // WithMemoryGCInterval sets the memory storage garbage collection interval.
 func (c StorageConfig) WithMemoryGCInterval(interval time.Duration) StorageConfig {
 	c.MemoryGCInterval = interval
 	return c
 }
 
+// StorageBuilder creates a Storage from a StorageConfig. It is what a backend
+// living outside this package registers with [RegisterStorage].
+type StorageBuilder func(StorageConfig) (Storage, error)
+
+var (
+	buildersMu sync.RWMutex
+	builders   = map[StorageType]StorageBuilder{}
+)
+
+// RegisterStorage makes a storage backend available to [NewStorage] under the
+// given type, in the manner of database/sql drivers. It panics on an empty
+// type or a duplicate registration, both of which are programming errors that
+// would otherwise surface as the wrong backend at runtime.
+//
+// Backends that need a third-party client register themselves from an init
+// function, so that importing them is what links the client in:
+//
+//	import _ "github.com/soulteary/session-kit/v3/redisstore"
+//
+// Nothing here is needed to use a backend directly -- redisstore.New returns
+// a Storage that NewManager accepts as it is. Registration exists so that
+// [NewStorage] and [NewStorageFromEnv], which pick a backend from
+// configuration rather than from code, can reach one this package does not
+// import. The same hook takes a Memcached, DynamoDB or in-house backend.
+func RegisterStorage(t StorageType, build StorageBuilder) {
+	if t == "" {
+		panic("session: RegisterStorage called with an empty storage type")
+	}
+	if build == nil {
+		panic("session: RegisterStorage called with a nil builder")
+	}
+
+	buildersMu.Lock()
+	defer buildersMu.Unlock()
+
+	if _, dup := builders[t]; dup {
+		panic(fmt.Sprintf("session: storage type %q registered twice", t))
+	}
+	builders[t] = build
+}
+
+func init() {
+	RegisterStorage(StorageTypeMemory, func(cfg StorageConfig) (Storage, error) {
+		return NewMemoryStorage(cfg.KeyPrefix, cfg.MemoryGCInterval), nil
+	})
+}
+
 // NewStorage creates a new Storage instance based on the configuration.
 // It automatically selects the appropriate storage backend based on the Type field.
+//
+// Only StorageTypeMemory is built in. Every other type must have been
+// registered, which for Redis means importing the redisstore subpackage:
+//
+//	import _ "github.com/soulteary/session-kit/v3/redisstore"
+//
+// That import is what links go-redis into the binary, so a service on
+// in-memory sessions does not carry it. Code that already holds a Redis
+// client should skip this factory and call redisstore.New directly.
 func NewStorage(cfg StorageConfig) (Storage, error) {
-	switch cfg.Type {
-	case StorageTypeMemory:
-		return NewMemoryStorage(cfg.KeyPrefix, cfg.MemoryGCInterval), nil
+	buildersMu.RLock()
+	build, ok := builders[cfg.Type]
+	buildersMu.RUnlock()
 
-	case StorageTypeRedis:
-		if cfg.RedisClient != nil {
-			return NewRedisStorage(cfg.RedisClient, cfg.KeyPrefix), nil
-		}
-		return NewRedisStorageFromConfig(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.KeyPrefix)
-
-	default:
-		return nil, fmt.Errorf("unknown storage type: %s", cfg.Type)
+	if ok {
+		return build(cfg)
 	}
+
+	if cfg.Type == StorageTypeRedis {
+		return nil, fmt.Errorf("storage type %q is not registered: add `import _ \"github.com/soulteary/session-kit/v3/redisstore\"`, or build the storage with redisstore.New", cfg.Type)
+	}
+	return nil, fmt.Errorf("unknown storage type: %s", cfg.Type)
 }
 
 // NewStorageFromEnv creates a Storage based on environment-like configuration.
 // If redisEnabled is true, it creates a Redis storage; otherwise, it creates a memory storage.
 // This is a convenience function for common use cases.
+//
+// Redis requires the redisstore subpackage to have been imported; see
+// [NewStorage].
 func NewStorageFromEnv(redisEnabled bool, redisAddr, redisPassword string, redisDB int, keyPrefix string) (Storage, error) {
 	if redisEnabled {
 		cfg := DefaultStorageConfig().

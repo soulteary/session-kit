@@ -1,4 +1,4 @@
-package session
+package redisstore
 
 import (
 	"context"
@@ -9,23 +9,28 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	session "github.com/soulteary/session-kit/v3"
 )
 
-// RedisStore implements Store using Redis. Keys are prefixed with keyPrefix.
-type RedisStore struct {
-	client    *redis.Client
+// Store implements session.Store using Redis. Keys are prefixed with
+// keyPrefix.
+type Store struct {
+	client    Client
 	keyPrefix string
 }
 
-// NewRedisStore creates a Redis-backed Store. keyPrefix is prepended to all keys (e.g. "otp:session:").
-func NewRedisStore(client *redis.Client, keyPrefix string) *RedisStore {
-	if keyPrefix != "" && keyPrefix[len(keyPrefix)-1] != ':' {
-		keyPrefix += ":"
-	}
-	return &RedisStore{client: client, keyPrefix: keyPrefix}
+// Compile-time proof that a Store is usable wherever session.Store is.
+var _ session.Store = (*Store)(nil)
+
+// NewStore creates a Redis-backed session.Store. keyPrefix is prepended to all
+// keys (e.g. "otp:session:"); unlike [New] it has no default, so an empty one
+// leaves the keys unprefixed.
+func NewStore(client Client, keyPrefix string) *Store {
+	return &Store{client: client, keyPrefix: normalizePrefix(keyPrefix, "")}
 }
 
-func (s *RedisStore) key(id string) string {
+func (s *Store) key(id string) string {
 	return s.keyPrefix + id
 }
 
@@ -38,7 +43,7 @@ func generateSessionID() (string, error) {
 }
 
 // Create creates a new session and returns its ID.
-func (s *RedisStore) Create(ctx context.Context, data map[string]interface{}, ttl time.Duration) (string, error) {
+func (s *Store) Create(ctx context.Context, data map[string]interface{}, ttl time.Duration) (string, error) {
 	id, err := generateSessionID()
 	if err != nil {
 		return "", fmt.Errorf("generate session id: %w", err)
@@ -50,8 +55,8 @@ func (s *RedisStore) Create(ctx context.Context, data map[string]interface{}, tt
 }
 
 // Get returns the session for the given ID, or nil and error if not found/expired.
-func (s *RedisStore) Get(ctx context.Context, id string) (*KVSessionRecord, error) {
-	if s.client == nil {
+func (s *Store) Get(ctx context.Context, id string) (*session.KVSessionRecord, error) {
+	if isNil(s.client) {
 		return nil, fmt.Errorf("redis client is nil")
 	}
 	data, err := s.client.Get(ctx, s.key(id)).Bytes()
@@ -61,7 +66,7 @@ func (s *RedisStore) Get(ctx context.Context, id string) (*KVSessionRecord, erro
 	if err != nil {
 		return nil, fmt.Errorf("redis get: %w", err)
 	}
-	var rec KVSessionRecord
+	var rec session.KVSessionRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, fmt.Errorf("unmarshal session: %w", err)
 	}
@@ -74,8 +79,8 @@ func (s *RedisStore) Get(ctx context.Context, id string) (*KVSessionRecord, erro
 
 // Set stores or updates the session for the given ID with the given ttl.
 // When updating an existing session, CreatedAt is preserved.
-func (s *RedisStore) Set(ctx context.Context, id string, data map[string]interface{}, ttl time.Duration) error {
-	if s.client == nil {
+func (s *Store) Set(ctx context.Context, id string, data map[string]interface{}, ttl time.Duration) error {
+	if isNil(s.client) {
 		return fmt.Errorf("redis client is nil")
 	}
 	now := time.Now()
@@ -83,7 +88,7 @@ func (s *RedisStore) Set(ctx context.Context, id string, data map[string]interfa
 	if existing, _ := s.Get(ctx, id); existing != nil {
 		createdAt = existing.CreatedAt
 	}
-	rec := &KVSessionRecord{
+	rec := &session.KVSessionRecord{
 		ID:        id,
 		Data:      data,
 		CreatedAt: createdAt,
@@ -100,8 +105,8 @@ func (s *RedisStore) Set(ctx context.Context, id string, data map[string]interfa
 }
 
 // Delete removes the session for the given ID.
-func (s *RedisStore) Delete(ctx context.Context, id string) error {
-	if s.client == nil {
+func (s *Store) Delete(ctx context.Context, id string) error {
+	if isNil(s.client) {
 		return fmt.Errorf("redis client is nil")
 	}
 	if err := s.client.Del(ctx, s.key(id)).Err(); err != nil {
@@ -111,8 +116,8 @@ func (s *RedisStore) Delete(ctx context.Context, id string) error {
 }
 
 // Exists reports whether a session exists for the given ID.
-func (s *RedisStore) Exists(ctx context.Context, id string) (bool, error) {
-	if s.client == nil {
+func (s *Store) Exists(ctx context.Context, id string) (bool, error) {
+	if isNil(s.client) {
 		return false, fmt.Errorf("redis client is nil")
 	}
 	n, err := s.client.Exists(ctx, s.key(id)).Result()

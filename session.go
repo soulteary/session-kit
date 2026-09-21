@@ -3,11 +3,9 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"reflect"
 	"time"
-
-	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/extractors"
-	fibersession "github.com/gofiber/fiber/v3/middleware/session"
 )
 
 // SessionKeys defines common session key names.
@@ -21,6 +19,59 @@ const (
 	KeyCreatedAt     = "created_at"
 	KeyLastAccess    = "last_access"
 )
+
+// Reader is the read side of a request-scoped session: the one method every
+// getter and Has* predicate in this package needs.
+//
+// The helpers take these interfaces rather than a concrete session type so
+// that this package does not import a web framework. Fiber v3's
+// *middleware/session.Session satisfies all of them as it is, so Fiber code
+// passes the session it already has and compiles unchanged.
+type Reader interface {
+	// Get returns the value stored under key, or nil when there is none.
+	Get(key any) any
+}
+
+// Writer is the write side of a request-scoped session.
+type Writer interface {
+	// Set stores val under key.
+	Set(key, val any)
+}
+
+// ReadWriter is a session that can be both read and written. The helpers that
+// read a value, change it and write it back -- [AddAMR] is the one here --
+// take this rather than [Session], so a session type without Destroy can
+// still use them.
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+// Saver is a session that can be written and persisted. [Authenticate] takes
+// it: it writes two keys and saves, and has no use for Get, Delete or
+// Destroy.
+type Saver interface {
+	Writer
+
+	// Save persists the session.
+	Save() error
+}
+
+// Session is the whole of what this package ever asks of a request-scoped
+// session. Only [Unauthenticate] needs all of it, because clearing an
+// identity means deleting keys and then destroying the record.
+type Session interface {
+	ReadWriter
+
+	// Delete removes the value stored under key.
+	Delete(key any)
+
+	// Save persists the session.
+	Save() error
+
+	// Destroy deletes the stored session and expires its cookie.
+	Destroy() error
+}
 
 // Manager provides high-level session management operations.
 type Manager struct {
@@ -105,46 +156,16 @@ func (m *Manager) TouchSession(session *SessionData) error {
 	return m.SaveSession(session)
 }
 
-// FiberSessionConfig returns a fiber/v3/middleware/session.Config configured to use the Manager's storage.
-func (m *Manager) FiberSessionConfig() fibersession.Config {
-	sameSite := fiber.CookieSameSiteLaxMode
-	normalizedSameSite := normalizeSameSite(m.config.SameSite)
-	switch normalizedSameSite {
-	case "Strict":
-		sameSite = fiber.CookieSameSiteStrictMode
-	case "None":
-		sameSite = fiber.CookieSameSiteNoneMode
-	case "Disabled":
-		sameSite = fiber.CookieSameSiteDisabled
-	}
+// Helper functions for request-scoped sessions
 
-	cookieSecure := m.config.Secure
-	if normalizedSameSite == "None" && !cookieSecure {
-		cookieSecure = true
-	}
-
-	return fibersession.Config{
-		IdleTimeout:    m.config.Expiration,
-		Storage:        fiberStorageAdapter{storage: m.storage},
-		Extractor:      extractors.FromCookie(m.config.CookieName),
-		CookieDomain:   m.config.CookieDomain,
-		CookiePath:     m.config.CookiePath,
-		CookieSecure:   cookieSecure,
-		CookieHTTPOnly: m.config.HTTPOnly,
-		CookieSameSite: sameSite,
-	}
-}
-
-// Helper functions for Fiber sessions
-
-// Authenticate marks a fiber session as authenticated.
-func Authenticate(session *fibersession.Session) error {
+// Authenticate marks a session as authenticated.
+func Authenticate(session Saver) error {
 	session.Set(KeyAuthenticated, true)
 	session.Set(KeyCreatedAt, time.Now().Unix())
 	return session.Save()
 }
 
-// Unauthenticate destroys a fiber session.
+// Unauthenticate destroys a session.
 //
 // The identity keys are cleared and then persisted BEFORE Destroy is
 // attempted, so that a failing Destroy leaves a de-authenticated session
@@ -154,8 +175,8 @@ func Authenticate(session *fibersession.Session) error {
 // session was untouched and still authenticated.
 //
 // This function handles nil session gracefully.
-func Unauthenticate(session *fibersession.Session) error {
-	if session == nil {
+func Unauthenticate(session Session) error {
+	if isNil(session) {
 		return nil
 	}
 
@@ -188,8 +209,29 @@ func Unauthenticate(session *fibersession.Session) error {
 	return destroyErr
 }
 
-// IsAuthenticated checks if a fiber session is authenticated.
-func IsAuthenticated(session *fibersession.Session) bool {
+// isNil reports whether there is no session to act on.
+//
+// Session is an interface, so a plain session == nil misses the case that
+// actually reaches Unauthenticate: a nil *middleware/session.Session stored
+// in it, which a caller gets from an unassigned field or from a helper that
+// returned early on an error. Calling Set on that panics, and a logout path
+// that takes the process down is worse than the failed logout it was meant to
+// report.
+func isNil(session Session) bool {
+	if session == nil {
+		return true
+	}
+	v := reflect.ValueOf(session)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
+// IsAuthenticated checks if a session is authenticated.
+func IsAuthenticated(session Reader) bool {
 	val := session.Get(KeyAuthenticated)
 	if val == nil {
 		return false
@@ -198,13 +240,13 @@ func IsAuthenticated(session *fibersession.Session) bool {
 	return ok && authenticated
 }
 
-// SetUserID sets the user ID in a fiber session.
-func SetUserID(session *fibersession.Session, userID string) {
+// SetUserID sets the user ID in a session.
+func SetUserID(session Writer, userID string) {
 	session.Set(KeyUserID, userID)
 }
 
-// GetUserID gets the user ID from a fiber session.
-func GetUserID(session *fibersession.Session) string {
+// GetUserID gets the user ID from a session.
+func GetUserID(session Reader) string {
 	val := session.Get(KeyUserID)
 	if val == nil {
 		return ""
@@ -216,13 +258,13 @@ func GetUserID(session *fibersession.Session) string {
 	return userID
 }
 
-// SetEmail sets the email in a fiber session.
-func SetEmail(session *fibersession.Session, email string) {
+// SetEmail sets the email in a session.
+func SetEmail(session Writer, email string) {
 	session.Set(KeyEmail, email)
 }
 
-// GetEmail gets the email from a fiber session.
-func GetEmail(session *fibersession.Session) string {
+// GetEmail gets the email from a session.
+func GetEmail(session Reader) string {
 	val := session.Get(KeyEmail)
 	if val == nil {
 		return ""
@@ -234,13 +276,13 @@ func GetEmail(session *fibersession.Session) string {
 	return email
 }
 
-// SetPhone sets the phone in a fiber session.
-func SetPhone(session *fibersession.Session, phone string) {
+// SetPhone sets the phone in a session.
+func SetPhone(session Writer, phone string) {
 	session.Set(KeyPhone, phone)
 }
 
-// GetPhone gets the phone from a fiber session.
-func GetPhone(session *fibersession.Session) string {
+// GetPhone gets the phone from a session.
+func GetPhone(session Reader) string {
 	val := session.Get(KeyPhone)
 	if val == nil {
 		return ""
@@ -252,13 +294,13 @@ func GetPhone(session *fibersession.Session) string {
 	return phone
 }
 
-// SetAMR sets the authentication methods references in a fiber session.
-func SetAMR(session *fibersession.Session, amr []string) {
+// SetAMR sets the authentication methods references in a session.
+func SetAMR(session Writer, amr []string) {
 	session.Set(KeyAMR, amr)
 }
 
-// GetAMR gets the authentication methods references from a fiber session.
-func GetAMR(session *fibersession.Session) []string {
+// GetAMR gets the authentication methods references from a session.
+func GetAMR(session Reader) []string {
 	return stringSlice(session.Get(KeyAMR))
 }
 
@@ -290,8 +332,8 @@ func stringSlice(val interface{}) []string {
 	}
 }
 
-// AddAMR adds an authentication method reference to a fiber session.
-func AddAMR(session *fibersession.Session, method string) {
+// AddAMR adds an authentication method reference to a session.
+func AddAMR(session ReadWriter, method string) {
 	amr := GetAMR(session)
 	for _, m := range amr {
 		if m == method {
@@ -302,8 +344,8 @@ func AddAMR(session *fibersession.Session, method string) {
 	SetAMR(session, amr)
 }
 
-// HasAMR checks if a fiber session has a specific authentication method.
-func HasAMR(session *fibersession.Session, method string) bool {
+// HasAMR checks if a session has a specific authentication method.
+func HasAMR(session Reader, method string) bool {
 	amr := GetAMR(session)
 	for _, m := range amr {
 		if m == method {
@@ -313,18 +355,18 @@ func HasAMR(session *fibersession.Session, method string) bool {
 	return false
 }
 
-// SetScopes sets the authorization scopes in a fiber session.
-func SetScopes(session *fibersession.Session, scopes []string) {
+// SetScopes sets the authorization scopes in a session.
+func SetScopes(session Writer, scopes []string) {
 	session.Set(KeyScopes, scopes)
 }
 
-// GetScopes gets the authorization scopes from a fiber session.
-func GetScopes(session *fibersession.Session) []string {
+// GetScopes gets the authorization scopes from a session.
+func GetScopes(session Reader) []string {
 	return stringSlice(session.Get(KeyScopes))
 }
 
-// HasScope checks if a fiber session has a specific scope.
-func HasScope(session *fibersession.Session, scope string) bool {
+// HasScope checks if a session has a specific scope.
+func HasScope(session Reader, scope string) bool {
 	scopes := GetScopes(session)
 	for _, s := range scopes {
 		if s == scope {
@@ -334,13 +376,13 @@ func HasScope(session *fibersession.Session, scope string) bool {
 	return false
 }
 
-// UpdateLastAccess updates the last access timestamp in a fiber session.
-func UpdateLastAccess(session *fibersession.Session) {
+// UpdateLastAccess updates the last access timestamp in a session.
+func UpdateLastAccess(session Writer) {
 	session.Set(KeyLastAccess, time.Now().Unix())
 }
 
-// GetLastAccess gets the last access timestamp from a fiber session.
-func GetLastAccess(session *fibersession.Session) time.Time {
+// GetLastAccess gets the last access timestamp from a session.
+func GetLastAccess(session Reader) time.Time {
 	val := session.Get(KeyLastAccess)
 	if val == nil {
 		return time.Time{}
@@ -352,8 +394,8 @@ func GetLastAccess(session *fibersession.Session) time.Time {
 	return time.Unix(timestamp, 0)
 }
 
-// GetCreatedAt gets the session creation timestamp from a fiber session.
-func GetCreatedAt(session *fibersession.Session) time.Time {
+// GetCreatedAt gets the session creation timestamp from a session.
+func GetCreatedAt(session Reader) time.Time {
 	val := session.Get(KeyCreatedAt)
 	if val == nil {
 		return time.Time{}
@@ -365,34 +407,22 @@ func GetCreatedAt(session *fibersession.Session) time.Time {
 	return time.Unix(timestamp, 0)
 }
 
-// CreateCookie creates a fiber.Cookie for session sharing across domains.
-func CreateCookie(config Config, sessionID string) *fiber.Cookie {
-	sameSite := fiber.CookieSameSiteLaxMode
-	normalizedSameSite := normalizeSameSite(config.SameSite)
-	switch normalizedSameSite {
-	case "Strict":
-		sameSite = fiber.CookieSameSiteStrictMode
-	case "None":
-		sameSite = fiber.CookieSameSiteNoneMode
-	case "Disabled":
-		sameSite = fiber.CookieSameSiteDisabled
-	}
-
-	cookieSecure := config.Secure
-	if normalizedSameSite == "None" && !cookieSecure {
-		cookieSecure = true
-	}
-
-	cookie := &fiber.Cookie{
+// CreateCookie builds the session cookie described by config, for sharing a
+// session across domains or setting it by hand.
+//
+// It returns a *net/http.Cookie, which net/http writes with http.SetCookie
+// and every other Go web framework accepts or converts. Fiber users call
+// fiberadapter.Cookie for a *fiber.Cookie instead; both are built from the
+// same [Config.SameSiteMode] and [Config.CookieSecure] rules.
+func CreateCookie(config Config, sessionID string) *http.Cookie {
+	return &http.Cookie{
 		Name:     config.CookieName,
 		Value:    sessionID,
 		Expires:  time.Now().Add(config.Expiration),
 		Path:     config.CookiePath,
 		Domain:   config.CookieDomain,
-		Secure:   cookieSecure,
-		HTTPOnly: config.HTTPOnly,
-		SameSite: sameSite,
+		Secure:   config.CookieSecure(),
+		HttpOnly: config.HTTPOnly,
+		SameSite: config.SameSiteMode(),
 	}
-
-	return cookie
 }
