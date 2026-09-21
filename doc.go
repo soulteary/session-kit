@@ -45,6 +45,11 @@
 // Any other type with the same Get, Set, Delete, Save and Destroy methods
 // works the same way, which is what keeps Fiber out of this package.
 //
+// [Regenerator] is the one optional interface: [Authenticate] rotates the
+// session ID through it when the session has a Regenerate method, which is
+// what keeps an ID planted before login from surviving it. A session type
+// that hands an ID to the client should implement it.
+//
 // # Two session models
 //
 // [Manager] and [SessionData] are the server-side record model: a JSON

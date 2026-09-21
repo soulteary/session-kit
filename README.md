@@ -197,6 +197,7 @@ func main() {
         session.SetEmail(sess, "user@example.com")
         session.AddAMR(sess, "pwd")
 
+        // Rotates the session ID first, then marks the session authenticated.
         return session.Authenticate(sess)
     })
 
@@ -219,8 +220,9 @@ session type:
 | `ReadWriter` | `Get`, `Set` | `AddAMR` |
 | `Saver` | `Set`, `Save` | `Authenticate` |
 | `Session` | `Get`, `Set`, `Delete`, `Save`, `Destroy` | `Unauthenticate` |
+| `Regenerator` | `Regenerate` | `Authenticate`, when the session offers it |
 
-`*github.com/gofiber/fiber/v3/middleware/session.Session` satisfies all five as
+`*github.com/gofiber/fiber/v3/middleware/session.Session` satisfies all six as
 it stands, which is why Fiber code passes the session it already has — and why
 the root package does not import Fiber. Any other type with the same five
 methods works too:
@@ -235,9 +237,19 @@ func (s *mySession) Save() error      { return nil }
 func (s *mySession) Destroy() error   { clear(s.values); return nil }
 ```
 
+`Regenerator` is the one optional interface. `Authenticate` rotates the session
+ID through it whenever the session has a `Regenerate() error` method, which is
+what keeps an ID planted before login from surviving it (session fixation). It
+is a capability rather than a line in `Saver` because `Saver` is part of the
+released v3 API, and because a session like `mySession` above hands the client
+no ID of its own: there is nothing to rotate and nothing an attacker can fix in
+advance. **If your session type does hand an ID to the client, implement
+`Regenerate`** — without it `Authenticate` has no way to rotate, and the ID the
+caller arrived with stays in place across login.
+
 ```go
 // Authentication
-session.Authenticate(sess)      // Mark as authenticated and save
+session.Authenticate(sess)      // Rotate the ID (when supported), mark authenticated, save
 session.Unauthenticate(sess)    // Clear the identity and destroy
 session.IsAuthenticated(sess)   // Check if authenticated
 
@@ -303,7 +315,12 @@ cosmetic difference.
   with `Secure=true` — `CookieSecure()` forces it on regardless, because a
   `SameSite=None` cookie without `Secure` is dropped by browsers rather than
   relaxed.
-- **Login hardening**: After successful authentication, rotate the session ID (regenerate) to mitigate session fixation.
+- **Login hardening**: `Authenticate()` rotates the session ID itself, so an ID
+  planted in the victim's browser before login cannot survive it (session
+  fixation). Rotation is attempted before the authentication markers are
+  written and a rotation failure is returned, so a session that could not be
+  rotated is deliberately left unauthenticated — check the error. Sessions that
+  expose no ID are left alone; see `Regenerator` above if yours does.
 - **Redis hardening**: Treat Redis as a trusted backend—use network isolation and credentials, and add timeouts at the client layer to prevent resource exhaustion.
 
 ### Storage config

@@ -2,6 +2,8 @@ package session
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -98,3 +100,140 @@ func TestMemoryStorageCloseIsIdempotent(t *testing.T) {
 		t.Errorf("second Close() error = %v", err)
 	}
 }
+
+// --- Session fixation (login must rotate the session id) ---
+
+// rotatingSession is a session that can rotate its own ID -- the shape Fiber
+// v3's *middleware/session.Session has. It records the order of the calls it
+// receives, because the order is the fail-closed guarantee: rotation has to be
+// attempted before anything marks the session authenticated.
+type rotatingSession struct {
+	values   map[any]any
+	id       string
+	rotated  int
+	saved    int
+	roterr   error
+	sequence []string
+}
+
+func newRotatingSession() *rotatingSession {
+	return &rotatingSession{values: map[any]any{}, id: "planted-id"}
+}
+
+func (s *rotatingSession) Get(key any) any { return s.values[key] }
+
+func (s *rotatingSession) Set(key, val any) {
+	s.sequence = append(s.sequence, "set")
+	s.values[key] = val
+}
+
+func (s *rotatingSession) Save() error {
+	s.sequence = append(s.sequence, "save")
+	s.saved++
+	return nil
+}
+
+func (s *rotatingSession) Regenerate() error {
+	s.sequence = append(s.sequence, "regenerate")
+	if s.roterr != nil {
+		return s.roterr
+	}
+	s.rotated++
+	s.id = fmt.Sprintf("rotated-%d", s.rotated)
+	return nil
+}
+
+// TestAuthenticateRotatesSessionID is the regression test for session
+// fixation. Authenticate only wrote the authentication markers and saved, so
+// the session ID survived login: an ID an attacker had planted in the victim's
+// browser came back out of login authenticated, and the attacker's copy of it
+// then granted access to the victim's account.
+func TestAuthenticateRotatesSessionID(t *testing.T) {
+	sess := newRotatingSession()
+	SetUserID(sess, "victim-123")
+	sess.sequence = nil // from here on, only what Authenticate itself does
+
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+
+	if sess.id == "planted-id" {
+		t.Error("the session id survived login; an id planted before login is now authenticated")
+	}
+	if sess.rotated != 1 {
+		t.Errorf("Regenerate called %d times, want 1", sess.rotated)
+	}
+	if !IsAuthenticated(sess) {
+		t.Error("session is not authenticated after Authenticate")
+	}
+	// Rotation keeps the data written before login.
+	if got := GetUserID(sess); got != "victim-123" {
+		t.Errorf("GetUserID() = %q after rotation, want %q", got, "victim-123")
+	}
+
+	// Rotation must come before anything marks the session authenticated.
+	if len(sess.sequence) == 0 || sess.sequence[0] != "regenerate" {
+		t.Errorf("call sequence = %v, want rotation first", sess.sequence)
+	}
+	if sess.sequence[len(sess.sequence)-1] != "save" {
+		t.Errorf("call sequence = %v, want the save last", sess.sequence)
+	}
+}
+
+// TestAuthenticateFailsClosedWhenRotationFails: a session that could not be
+// rotated must be left unauthenticated, not marked authenticated under an ID
+// an attacker may already hold. Nothing may be written or saved either --
+// Fiber's middleware persists the session when the handler returns, so a
+// marker written before a failed rotation would reach storage under the old
+// ID anyway.
+func TestAuthenticateFailsClosedWhenRotationFails(t *testing.T) {
+	rotationFailed := errors.New("storage unavailable")
+	sess := newRotatingSession()
+	sess.roterr = rotationFailed
+
+	err := Authenticate(sess)
+	if err == nil {
+		t.Fatal("Authenticate() = nil, want an error when the id could not be rotated")
+	}
+	if !errors.Is(err, rotationFailed) {
+		t.Errorf("Authenticate() error = %v, want it to wrap %v", err, rotationFailed)
+	}
+	if IsAuthenticated(sess) {
+		t.Error("session was marked authenticated even though rotation failed")
+	}
+	if sess.saved != 0 {
+		t.Errorf("Save called %d times after a failed rotation, want 0", sess.saved)
+	}
+	if want := []string{"regenerate"}; len(sess.sequence) != len(want) || sess.sequence[0] != want[0] {
+		t.Errorf("call sequence = %v, want %v", sess.sequence, want)
+	}
+}
+
+// TestAuthenticateWithoutRotationSupport: rotation is taken up through
+// [Regenerator] rather than required by [Saver], so a session that cannot
+// rotate -- the framework-free memorySession in ExampleAuthenticate, for one
+// -- still authenticates. Requiring it in Saver instead would break every such
+// type that compiles against the released v3 API.
+func TestAuthenticateWithoutRotationSupport(t *testing.T) {
+	sess := &plainSession{values: map[any]any{}}
+
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+	if !IsAuthenticated(sess) {
+		t.Error("a session that cannot rotate should still authenticate")
+	}
+	if sess.saved != 1 {
+		t.Errorf("Save called %d times, want 1", sess.saved)
+	}
+}
+
+// plainSession satisfies Saver and Reader but cannot rotate.
+type plainSession struct {
+	values map[any]any
+	saved  int
+}
+
+func (s *plainSession) Get(key any) any  { return s.values[key] }
+func (s *plainSession) Set(key, val any) { s.values[key] = val }
+func (s *plainSession) Save() error      { s.saved++; return nil }

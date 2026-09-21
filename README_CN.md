@@ -189,6 +189,7 @@ func main() {
         session.SetEmail(sess, "user@example.com")
         session.AddAMR(sess, "pwd")
 
+        // 先轮换会话 ID，再标记为已认证。
         return session.Authenticate(sess)
     })
 
@@ -209,8 +210,9 @@ func main() {
 | `ReadWriter` | `Get`、`Set` | `AddAMR` |
 | `Saver` | `Set`、`Save` | `Authenticate` |
 | `Session` | `Get`、`Set`、`Delete`、`Save`、`Destroy` | `Unauthenticate` |
+| `Regenerator` | `Regenerate` | `Authenticate`（会话支持时） |
 
-`*github.com/gofiber/fiber/v3/middleware/session.Session` 原样就满足这五个
+`*github.com/gofiber/fiber/v3/middleware/session.Session` 原样就满足这六个
 接口，所以 Fiber 代码直接把手上的会话传进去即可——这也正是根包不必导入
 Fiber 的原因。任何具备同样五个方法的类型同样可用：
 
@@ -224,9 +226,17 @@ func (s *mySession) Save() error      { return nil }
 func (s *mySession) Destroy() error   { clear(s.values); return nil }
 ```
 
+`Regenerator` 是其中唯一可选的接口。只要会话带有 `Regenerate() error` 方法，
+`Authenticate` 就会通过它轮换会话 ID——这正是让"登录前被植入的会话 ID 无法在登录后
+继续有效"（会话固定攻击）的关键。之所以把它做成一项可选能力、而不是写进 `Saver`，
+一是 `Saver` 属于已发布的 v3 API，二是像上面 `mySession` 这样的会话并不向客户端
+交付自己的 ID：既没有可轮换的对象，攻击者也无从提前植入。**如果你的会话类型确实
+会把 ID 交给客户端，请实现 `Regenerate`**——否则 `Authenticate` 无从轮换，调用方
+带来的那个 ID 会原样跨过登录继续有效。
+
 ```go
 // 认证
-session.Authenticate(sess)      // 标记为已认证并保存
+session.Authenticate(sess)      // 轮换 ID（支持时）、标记已认证并保存
 session.Unauthenticate(sess)    // 清除身份信息并销毁
 session.IsAuthenticated(sess)   // 检查是否已认证
 
@@ -289,7 +299,10 @@ cfg := session.DefaultConfig().
   跨站请求时才用 `None`，并且务必配合 `Secure=true`——无论如何
   `CookieSecure()` 都会强制打开它，因为没有 `Secure` 的 `SameSite=None`
   Cookie 会被浏览器直接丢弃，而不是放宽处理。
-- **登录加固**：认证成功后轮换会话 ID（regenerate），以缓解会话固定攻击。
+- **登录加固**：`Authenticate()` 会自行轮换会话 ID，因此攻击者在登录前植入受害者
+  浏览器的会话 ID 无法在登录后继续有效（会话固定攻击）。轮换发生在写入认证标记之前，
+  且轮换失败会作为错误返回——无法完成轮换的会话会被刻意保持为未认证状态，请检查该
+  错误。不暴露 ID 的会话则不受影响；若你的会话类型会暴露 ID，参见上文 `Regenerator`。
 - **Redis 加固**：把 Redis 当作受信后端——做好网络隔离与凭据管理，并在客户端
   层面设置超时，防止资源耗尽。
 

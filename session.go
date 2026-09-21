@@ -57,6 +57,27 @@ type Saver interface {
 	Save() error
 }
 
+// Regenerator is a session that can rotate its own ID: a new identifier, the
+// same data, and the old record dropped from storage. Fiber v3's
+// *middleware/session.Session implements it as it stands.
+//
+// [Authenticate] rotates through this interface whenever the session offers
+// it, which is what keeps an ID planted before login from surviving it
+// (session fixation). Rotation is a capability rather than a line in [Saver]
+// because Saver is part of the released v3 API, and because a session that
+// hands the client no ID of its own -- the memorySession in this package's
+// ExampleAuthenticate, for one -- has nothing to rotate and nothing an
+// attacker can fix in advance.
+//
+// A session type that DOES hand an ID to the client should implement this.
+// Without it Authenticate has no way to rotate, and the ID the caller arrived
+// with stays in place across login.
+type Regenerator interface {
+	// Regenerate gives the session a new ID and deletes the old one from
+	// storage, keeping the session's data.
+	Regenerate() error
+}
+
 // Session is the whole of what this package ever asks of a request-scoped
 // session. Only [Unauthenticate] needs all of it, because clearing an
 // identity means deleting keys and then destroying the record.
@@ -158,8 +179,40 @@ func (m *Manager) TouchSession(session *SessionData) error {
 
 // Helper functions for request-scoped sessions
 
-// Authenticate marks a session as authenticated.
+// Authenticate rotates the session ID when the session can rotate it, then
+// marks the session as authenticated.
+//
+// The rotation closes a session fixation hole: this helper used to write the
+// authentication markers and save under the *existing* ID, so an ID an
+// attacker had planted in the victim's browser before login came back out of
+// login authenticated, and the attacker's copy of that ID then granted access
+// to the victim's account. Fiber adopts a client-supplied ID whenever storage
+// holds a record for it, so planting one only takes visiting the site first.
+// Both READMEs listed ID rotation at login as the expected hardening, but left
+// it to every caller to remember -- and their own login examples did not do it.
+//
+// Rotation runs before the markers are written, and a rotation error is fatal:
+// a session that could not be rotated is left unauthenticated rather than
+// marked authenticated under an ID an attacker may already hold. The order
+// matters on Fiber's middleware (session.FromContext) path in particular,
+// where Save is a no-op and the middleware persists the session when the
+// handler returns -- markers written before a failed rotation would be saved
+// under the old ID anyway.
+//
+// The capability is taken up through [Regenerator] rather than required by
+// [Saver]; see [Regenerator] for why, and for what to do if your own session
+// type hands an ID to the client.
+//
+// Data already set on the session (user ID, email, AMR, scopes) carries over
+// to the new ID; only the old storage record is dropped. Callers that already
+// rotate the ID themselves stay correct, they simply rotate once more.
 func Authenticate(session Saver) error {
+	if rotator, ok := session.(Regenerator); ok {
+		if err := rotator.Regenerate(); err != nil {
+			return fmt.Errorf("failed to rotate session id on login: %w", err)
+		}
+	}
+
 	session.Set(KeyAuthenticated, true)
 	session.Set(KeyCreatedAt, time.Now().Unix())
 	return session.Save()

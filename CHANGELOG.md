@@ -10,6 +10,40 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+### Fixed — SECURITY
+
+- **`Authenticate` now rotates the session ID (session fixation).** It only
+  wrote the authentication markers and saved, leaving the ID untouched. Fiber
+  adopts a client-supplied session ID whenever storage holds a record for it,
+  so an attacker could mint a real ID, plant it in the victim's browser, and
+  have that same ID come back out of login authenticated — their copy then
+  granted access to the victim's account. Both READMEs listed ID rotation at
+  login as the expected hardening but left it to every caller, and their own
+  login examples did not do it.
+
+  Rotation is attempted before the markers are written and a rotation failure
+  is returned, so a session that could not be rotated is left unauthenticated
+  rather than authenticated under an ID an attacker may already hold. The
+  order matters on Fiber's middleware path, where `Save` is a no-op and the
+  middleware persists the session when the handler returns.
+
+### Added
+
+- **`Regenerator`**, a session that can rotate its own ID. `Authenticate`
+  rotates through it whenever the session offers it;
+  `*middleware/session.Session` does, so Fiber code is fixed with no change at
+  the call site. Rotation is an optional capability rather than a method on
+  `Saver` because `Saver` is part of the released v3 API, and because a
+  session that hands the client no ID — the `memorySession` in
+  `ExampleAuthenticate`, for one — has nothing to rotate and cannot be
+  fixated. A session type that does expose an ID should implement
+  `Regenerate`.
+
+### Changed
+
+- The session ID now always changes at login. Anything holding the pre-login
+  ID externally will see it rotate; that is the fix, not a regression.
+
 ## [3.0.0] — 2026-09-21
 
 ### Changed — BREAKING
