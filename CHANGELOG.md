@@ -10,6 +10,61 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-09-21
+
+### Added
+
+- **A configured backend can now be a Cluster or a Sentinel failover setup.**
+  `redisstore.New` has accepted every client shape since 3.0.0, but only from
+  a caller holding a client it built itself. A caller that *configures* its
+  backend — which is what `session.NewStorage` does — could describe a
+  standalone server and nothing else: `NewFromConfig`'s four positional
+  arguments and `StorageConfig`'s single `RedisAddr` had nowhere to put a
+  second address.
+
+  - `redisstore.Options` and `redisstore.NewFromOptions` describe all three
+    deployments: `Addr` for one server, `Addrs` for a Cluster's nodes or a
+    Sentinel's, `MasterName` to select Sentinel, and `SentinelUsername` /
+    `SentinelPassword` for Sentinel's own ACLs — separate from `Password`,
+    which authenticates to the Redis server, because the two credentials
+    frequently differ and an ACL-protected Sentinel is unreachable without
+    them.
+  - `session.StorageConfig` gains `RedisAddrs`, `RedisMasterName`,
+    `RedisSentinelUsername` and `RedisSentinelPassword`, with
+    `WithRedisAddrs`, `WithRedisMasterName` and `WithRedisSentinelAuth`.
+    `RedisAddrs` wins over `RedisAddr` when both are set, so
+    `DefaultStorageConfig`'s `localhost:6379` cannot shadow a list the caller
+    supplied.
+
+  Nothing is removed and no signature changes, so this is a minor release and
+  the module path is unchanged. Adding struct fields only breaks an unkeyed
+  composite literal, which `go vet` already rejects for a struct from another
+  package.
+
+### Changed
+
+- `NewFromConfig` now delegates to `NewFromOptions`. Its arguments land where
+  they always did; what goes away is a redundant second `PING` — redis-kit's
+  constructors already verify connectivity before returning, and this package
+  was pinging again afterwards, so every standalone construction cost two
+  round trips instead of one.
+
+- **redis-kit v1.6.0 → v1.7.0.** That release is what makes the above
+  possible: it widened its own constructors to `redis.UniversalClient` and
+  added `client.NewUniversalClient` along with `Config.Addrs`, `MasterName`
+  and the Sentinel credentials. The bump also lifts the minimum this module
+  pushes onto its consumers through MVS.
+
+### Tests
+
+- The `StorageConfig` → `Options` handover is asserted field by field against
+  the mapping itself, not through a failed dial: "an error came back" would
+  pass just as happily with every field dropped, and costs seconds of Sentinel
+  retries to learn nothing.
+- Runnable examples for the standalone, Cluster, Sentinel and
+  from-configuration paths. The Cluster and Sentinel ones carry no `Output:`
+  comment — they need a real deployment — but `go test` compiles them.
+
 ## [3.0.1] — 2026-09-21
 
 ### Fixed — SECURITY

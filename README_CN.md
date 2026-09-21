@@ -19,7 +19,7 @@ Go 语言会话管理库：存储后端接口与内存实现、服务端会话�
 |---|---|---|
 | `github.com/soulteary/session-kit/v3` | *（仅标准库）* | `Storage`、`MemoryStorage`、`Manager`、`SessionData`、`Store`、`KVManager`、`Config`、`CreateCookie` 及会话辅助函数 |
 | `.../v3/fiberadapter` | Fiber v3、fasthttp | `SessionConfig`、`Storage`、`Cookie`、`SameSite` |
-| `.../v3/redisstore` | go-redis、redis-kit | `Storage`、`New`、`NewFromConfig`、`Store`、`NewStore`、`Client` |
+| `.../v3/redisstore` | go-redis、redis-kit | `Storage`、`New`、`NewFromOptions`、`NewFromConfig`、`Options`、`Store`、`NewStore`、`Client` |
 
 使用内存会话的 net/http 服务，不会为这两个子包的存在付出任何代价。以只导入
 根包的程序实测，相比 v2.3.0：链接的包少了 97 个、模块少了 20 个、二进制
@@ -122,7 +122,46 @@ func main() {
 storage, err := redisstore.NewFromConfig("localhost:6379", "", 0, "myapp:session:")
 ```
 
+`NewFromConfig` 只能连到单机 —— 四个位置参数描述不了别的形态。`NewFromOptions` 可以：
+
+```go
+// 集群：两个及以上地址，且不设 master name。
+storage, err := redisstore.NewFromOptions(redisstore.Options{
+    Addrs:     []string{"10.0.0.1:6379", "10.0.0.2:6379", "10.0.0.3:6379"},
+    KeyPrefix: "myapp:session:",
+})
+
+// 哨兵：这里的地址是哨兵节点，不是 Redis 服务器。
+storage, err := redisstore.NewFromOptions(redisstore.Options{
+    Addrs:            []string{"10.0.0.1:26379", "10.0.0.2:26379"},
+    MasterName:       "mymaster",
+    Password:         "the-redis-password",     // 哨兵指向的那个主库
+    SentinelUsername: "sentinel-user",          // 哨兵自身
+    SentinelPassword: "the-sentinel-password",
+    KeyPrefix:        "myapp:session:",
+})
+```
+
+这两套凭据认证的是不同的东西，而且经常不一样：开了 ACL 的哨兵，不给
+`SentinelUsername`/`SentinelPassword` 根本连不上。
+
 ### 由配置决定后端
+
+`StorageConfig` 能描述的部署形态和 `NewFromOptions` 一样：`RedisAddr` 对应单机，
+`RedisAddrs` 对应集群节点或哨兵节点，`RedisMasterName` 用来选择哨兵模式，
+`RedisSentinelUsername`/`RedisSentinelPassword` 对应哨兵自己的 ACL。两者都设置时
+`RedisAddrs` 优先。
+
+```go
+cfg := session.DefaultStorageConfig().
+    WithType(session.StorageTypeRedis).
+    WithRedisAddrs("10.0.0.1:26379", "10.0.0.2:26379").
+    WithRedisMasterName("mymaster").
+    WithRedisSentinelAuth("sentinel-user", "the-sentinel-password").
+    WithKeyPrefix("myapp:session:")
+
+storage, err := session.NewStorage(cfg)
+```
 
 `NewStorage` 自己就能创建内存存储。其他后端必须先注册，对 Redis 来说就是
 以副作用方式导入子包：
