@@ -10,6 +10,8 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-09-21
+
 ### Fixed — SECURITY
 
 - **`Authenticate` now rotates the session ID (session fixation).** It only
@@ -246,7 +248,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/soulteary/session-kit/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/soulteary/session-kit/compare/v2.3.0...v3.0.0
 [2.3.0]: https://github.com/soulteary/session-kit/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/soulteary/session-kit/compare/v2.1.0...v2.2.0

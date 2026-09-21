@@ -449,6 +449,21 @@ _ = mgr.Delete(ctx, id)
 - **MustNewStorage(cfg)** —— 与 `NewStorage(cfg)` 相同，但出错时 panic（适合 `main()`）。
 - **RegisterStorage(type, builder)** —— 让 `NewStorage` 认识本模块并未内置的后端。
 
+## 升级说明（v3.0.1）
+
+安全修复。没有移除任何 API，也不需要改写任何调用。
+
+- `Authenticate` 会在标记已认证之前轮换会话 ID，修复会话固定漏洞。Fiber 代码的调用点
+  无需改动即可获得该修复，因为 `*middleware/session.Session` 本身就有
+  `Regenerate() error`。
+- 因此会话 ID 在登录时必然变化。任何在外部持有登录前 ID 的地方都会看到它被轮换——
+  这正是修复本身，而非回归。
+- 轮换失败会作为错误返回，而不是继续把会话标记为已认证，请检查 `Authenticate`
+  返回的错误。
+- 新增 `Regenerator` 接口。**如果你自己的会话类型会把 ID 交给客户端，请实现
+  `Regenerate() error`**——否则 `Authenticate` 无从轮换，调用方带来的那个 ID 会
+  原样跨过登录继续有效。
+
 ## 升级说明（v3.0.0）
 
 导入路径对所有人都会变，但绝大多数调用点不用改。

@@ -470,6 +470,24 @@ _ = mgr.Delete(ctx, id)
 - **MustNewStorage(cfg)** — same as `NewStorage(cfg)` but panics on error (e.g. in `main()`).
 - **RegisterStorage(type, builder)** — teach `NewStorage` about a backend this module does not ship.
 
+## Upgrade notes (v3.0.1)
+
+Security fix. No API was removed and no call needs rewriting.
+
+- `Authenticate` rotates the session ID before it marks the session
+  authenticated, closing a session fixation hole. Fiber code gets this with no
+  change at the call site, because `*middleware/session.Session` already has
+  `Regenerate() error`.
+- The session ID therefore always changes at login. Anything holding the
+  pre-login ID externally will see it rotate — that is the fix, not a
+  regression.
+- A rotation failure is returned instead of the session being marked
+  authenticated, so check the error `Authenticate` gives you.
+- New `Regenerator` interface. **If your own session type hands an ID to the
+  client, implement `Regenerate() error`** — without it there is nothing for
+  `Authenticate` to rotate, and the ID the caller arrived with stays in place
+  across login.
+
 ## Upgrade notes (v3.0.0)
 
 The import path changes for everyone. Most call sites do not.
