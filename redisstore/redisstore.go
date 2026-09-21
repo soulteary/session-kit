@@ -18,11 +18,13 @@
 //	storage := redisstore.New(redisClient, "session:")
 //	manager := session.NewManager(storage, session.DefaultConfig())
 //
-// [New] accepts any go-redis client shape -- standalone, cluster, ring or a
-// Sentinel-backed failover client. To have the package open the connection
-// instead, [NewFromConfig] takes a single server address and
-// [NewFromStorageConfig] takes a full [session.StorageConfig], which can also
-// describe a cluster or a Sentinel deployment.
+// [NewFromOptions] builds the client for you instead, and can describe a
+// Cluster or a Sentinel failover setup as well as a standalone server:
+//
+//	storage, err := redisstore.NewFromOptions(redisstore.Options{
+//		Addrs:      []string{"10.0.0.1:26379", "10.0.0.2:26379"},
+//		MasterName: "mymaster",
+//	})
 //
 // Importing this package also registers session.StorageTypeRedis with
 // session.NewStorage, for code that picks its backend from configuration:
@@ -47,7 +49,7 @@ import (
 // DefaultKeyPrefix is the key prefix [New] applies when given an empty one.
 const DefaultKeyPrefix = "session:"
 
-// dialTimeout bounds the connectivity check [NewFromConfig] makes before it
+// dialTimeout bounds the connectivity check [NewFromOptions] makes before it
 // hands back a storage.
 const dialTimeout = 5 * time.Second
 
@@ -71,9 +73,7 @@ type Client interface {
 
 func init() {
 	session.RegisterStorage(session.StorageTypeRedis, func(cfg session.StorageConfig) (session.Storage, error) {
-		// The whole config, not four of its fields: that is what lets
-		// session.NewStorage reach a cluster or a Sentinel deployment.
-		return NewFromStorageConfig(cfg)
+		return NewFromOptions(optionsFor(cfg))
 	})
 }
 
@@ -99,69 +99,106 @@ func New(client Client, keyPrefix string) *Storage {
 	}
 }
 
-// NewFromConfig creates a new Redis storage for a single standalone server.
-// This is a convenience function that creates both the Redis client and
-// storage, and verifies connectivity before returning.
+// optionsFor maps a session.StorageConfig onto Options.
 //
-// Its parameters can only describe one server. For a cluster or a Sentinel
-// deployment use [NewFromStorageConfig], or build the client yourself and
-// pass it to [New] -- which has always accepted any client shape.
-func NewFromConfig(addr, password string, db int, keyPrefix string) (*Storage, error) {
-	return NewFromStorageConfig(session.StorageConfig{
-		RedisAddr:     addr,
-		RedisPassword: password,
-		RedisDB:       db,
-		KeyPrefix:     keyPrefix,
-	})
+// It is a function of its own rather than a literal inside the registration
+// closure so the handover can be asserted field by field. A field silently
+// dropped here is invisible until a deployment cannot reach its Sentinel and
+// nothing says why.
+func optionsFor(cfg session.StorageConfig) Options {
+	return Options{
+		Addr:             cfg.RedisAddr,
+		Addrs:            cfg.RedisAddrs,
+		MasterName:       cfg.RedisMasterName,
+		Password:         cfg.RedisPassword,
+		SentinelUsername: cfg.RedisSentinelUsername,
+		SentinelPassword: cfg.RedisSentinelPassword,
+		DB:               cfg.RedisDB,
+		KeyPrefix:        cfg.KeyPrefix,
+	}
 }
 
-// NewFromStorageConfig creates a new Redis storage from a full
-// [session.StorageConfig], and verifies connectivity before returning.
+// Options describes a Redis deployment to connect to. It is what
+// [NewFromOptions] reads, and it exists because the four positional arguments
+// of [NewFromConfig] can only describe a standalone server.
 //
-// It builds whichever client the configuration describes: a Sentinel-backed
-// failover client when RedisMasterName is set, a cluster client when
-// RedisAddrs holds more than one address, and a single-node client otherwise.
-// [New] has always accepted any of those; this is the path that can now
-// *construct* one, so a cluster or Sentinel deployment is served end to end
-// rather than only by callers who already hold a client.
+// The zero value is not usable: either Addr or Addrs must be set.
+type Options struct {
+	// Addr is a single host:port. It is used when Addrs is empty.
+	Addr string
+
+	// Addrs is a seed list: the nodes of a Redis Cluster, or the Sentinel
+	// nodes of a failover setup. Two or more entries with MasterName empty
+	// select a cluster client.
+	Addrs []string
+
+	// MasterName is the Sentinel master name. Setting it selects a
+	// Sentinel-backed failover client, and Addrs (or Addr) is then read as
+	// the Sentinel addresses rather than as Redis servers.
+	MasterName string
+
+	// Password authenticates to the Redis server -- under Sentinel, the
+	// master it points at, not the Sentinel nodes.
+	Password string
+
+	// SentinelUsername and SentinelPassword authenticate to the Sentinel
+	// nodes themselves. A Sentinel deployment with ACLs cannot be reached
+	// without them, and they are frequently not the same credentials as
+	// Password.
+	SentinelUsername string
+	SentinelPassword string
+
+	// DB is the database number. Redis Cluster supports only database 0, so
+	// it is ignored there.
+	DB int
+
+	// KeyPrefix is prepended to all session keys; an empty one becomes
+	// [DefaultKeyPrefix].
+	KeyPrefix string
+}
+
+// NewFromOptions creates a Redis storage against whichever deployment opts
+// describes -- standalone, Cluster, or Sentinel-backed failover -- and
+// verifies connectivity before returning.
 //
-// This is also what session.NewStorage calls for StorageTypeRedis, so
-// selecting a backend from configuration reaches the same client shapes.
-func NewFromStorageConfig(cfg session.StorageConfig) (*Storage, error) {
-	client, err := rediskitclient.NewUniversalClient(clientConfig(cfg))
+// [New] already accepted every client shape, but only for a caller holding a
+// client it built itself. This is the same reach for a caller that configures
+// its backend rather than constructing it, which is the path
+// [session.NewStorage] takes.
+func NewFromOptions(opts Options) (*Storage, error) {
+	cfg := rediskitclient.DefaultConfig().
+		WithAddr(opts.Addr).
+		WithPassword(opts.Password).
+		WithDB(opts.DB)
+	cfg.Addrs = opts.Addrs
+	cfg.MasterName = opts.MasterName
+	cfg.SentinelUsername = opts.SentinelUsername
+	cfg.SentinelPassword = opts.SentinelPassword
+	cfg.DialTimeout = dialTimeout
+
+	// NewUniversalClient pings before it returns and closes the client if the
+	// server does not answer, so there is no second check to make here.
+	client, err := rediskitclient.NewUniversalClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Redis client: %w", err)
 	}
 
-	// Test connection
-	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-	defer cancel()
-
-	if err := rediskitclient.Ping(ctx, client); err != nil {
-		_ = rediskitclient.Close(client)
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
-	}
-
-	return New(client, cfg.KeyPrefix), nil
+	return New(client, opts.KeyPrefix), nil
 }
 
-// clientConfig maps a session.StorageConfig onto the redis-kit client config
-// that decides which client shape gets built.
+// NewFromConfig creates a new Redis storage using configuration.
+// This is a convenience function that creates both the Redis client and
+// storage, and verifies connectivity before returning.
 //
-// Separate from NewFromStorageConfig so the mapping can be asserted without a
-// network: the alternative is a test that waits out go-redis's Sentinel
-// discovery retries to prove a field was copied.
-func clientConfig(cfg session.StorageConfig) rediskitclient.Config {
-	// Addrs is copied unconditionally. An empty one needs no guard: redis-kit
-	// falls back to Addr on len(Addrs) == 0, so a branch here would be dead
-	// code -- removing it changed no test, which is how it was found.
-	return rediskitclient.DefaultConfig().
-		WithAddr(cfg.RedisAddr).
-		WithAddrs(cfg.RedisAddrs...).
-		WithPassword(cfg.RedisPassword).
-		WithDB(cfg.RedisDB).
-		WithMasterName(cfg.RedisMasterName).
-		WithSentinelAuth(cfg.RedisSentinelUsername, cfg.RedisSentinelPassword)
+// It reaches a standalone server only. For a Cluster or a Sentinel failover
+// setup, use [NewFromOptions].
+func NewFromConfig(addr, password string, db int, keyPrefix string) (*Storage, error) {
+	return NewFromOptions(Options{
+		Addr:      addr,
+		Password:  password,
+		DB:        db,
+		KeyPrefix: keyPrefix,
+	})
 }
 
 // normalizePrefix applies fallback when prefix is empty and makes sure the

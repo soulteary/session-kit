@@ -10,44 +10,60 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-09-21
+
 ### Added
 
-- **Cluster and Sentinel session storage can now be built from configuration.**
-  `redisstore.New` has always accepted any go-redis client shape, but the only
-  way to have the package *construct* one was `NewFromConfig(addr, password,
-  db, keyPrefix)` — four parameters that can describe exactly one standalone
-  server. A cluster or Sentinel deployment was therefore reachable only by
-  callers who already held a client, and not at all through
-  `session.NewStorage`.
+- **A configured backend can now be a Cluster or a Sentinel failover setup.**
+  `redisstore.New` has accepted every client shape since 3.0.0, but only from
+  a caller holding a client it built itself. A caller that *configures* its
+  backend — which is what `session.NewStorage` does — could describe a
+  standalone server and nothing else: `NewFromConfig`'s four positional
+  arguments and `StorageConfig`'s single `RedisAddr` had nowhere to put a
+  second address.
 
-  `redisstore.NewFromStorageConfig(cfg)` takes a full `session.StorageConfig`
-  and builds whichever client it describes: a Sentinel-backed failover client
-  when `RedisMasterName` is set, a cluster client when `RedisAddrs` holds more
-  than one address, and a single-node client otherwise.
+  - `redisstore.Options` and `redisstore.NewFromOptions` describe all three
+    deployments: `Addr` for one server, `Addrs` for a Cluster's nodes or a
+    Sentinel's, `MasterName` to select Sentinel, and `SentinelUsername` /
+    `SentinelPassword` for Sentinel's own ACLs — separate from `Password`,
+    which authenticates to the Redis server, because the two credentials
+    frequently differ and an ACL-protected Sentinel is unreachable without
+    them.
+  - `session.StorageConfig` gains `RedisAddrs`, `RedisMasterName`,
+    `RedisSentinelUsername` and `RedisSentinelPassword`, with
+    `WithRedisAddrs`, `WithRedisMasterName` and `WithRedisSentinelAuth`.
+    `RedisAddrs` wins over `RedisAddr` when both are set, so
+    `DefaultStorageConfig`'s `localhost:6379` cannot shadow a list the caller
+    supplied.
 
-- **`session.StorageConfig` gains `RedisAddrs`, `RedisMasterName`,
-  `RedisSentinelUsername` and `RedisSentinelPassword`**, with `WithRedisAddrs`,
-  `WithRedisMasterName` and `WithRedisSentinelAuth`. `RedisAddrs` takes
-  precedence over `RedisAddr`. The Sentinel credentials are deliberately
-  separate from `RedisPassword`: they authenticate to the Sentinel nodes, not
-  to the Redis server behind them, and the two routinely differ.
-
-  These are plain data, so the root package still imports nothing outside the
-  standard library — only `redisstore` reads them.
+  Nothing is removed and no signature changes, so this is a minor release and
+  the module path is unchanged. Adding struct fields only breaks an unkeyed
+  composite literal, which `go vet` already rejects for a struct from another
+  package.
 
 ### Changed
 
-- **`session.NewStorage` passes the whole `StorageConfig` to the Redis
-  builder** instead of four of its fields, which is what lets the registry
-  path reach the new client shapes. `NewFromConfig` keeps its signature and
-  its behaviour, and is now the single-server shorthand for
-  `NewFromStorageConfig`.
+- `NewFromConfig` now delegates to `NewFromOptions`. Its arguments land where
+  they always did; what goes away is a redundant second `PING` — redis-kit's
+  constructors already verify connectivity before returning, and this package
+  was pinging again afterwards, so every standalone construction cost two
+  round trips instead of one.
 
-- **Requires `redis-kit` v1.7.0**, for `client.NewUniversalClient`. That
-  release also widened redis-kit's own parameters from `*redis.Client` to
-  `redis.UniversalClient`; nothing in session-kit had to change for it, which
-  this bump incidentally confirms.
+- **redis-kit v1.6.0 → v1.7.0.** That release is what makes the above
+  possible: it widened its own constructors to `redis.UniversalClient` and
+  added `client.NewUniversalClient` along with `Config.Addrs`, `MasterName`
+  and the Sentinel credentials. The bump also lifts the minimum this module
+  pushes onto its consumers through MVS.
 
+### Tests
+
+- The `StorageConfig` → `Options` handover is asserted field by field against
+  the mapping itself, not through a failed dial: "an error came back" would
+  pass just as happily with every field dropped, and costs seconds of Sentinel
+  retries to learn nothing.
+- Runnable examples for the standalone, Cluster, Sentinel and
+  from-configuration paths. The Cluster and Sentinel ones carry no `Output:`
+  comment — they need a real deployment — but `go test` compiles them.
 
 ## [3.0.1] — 2026-09-21
 

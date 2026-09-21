@@ -26,33 +26,35 @@ type StorageConfig struct {
 	KeyPrefix string
 
 	// RedisAddr is the Redis server address (for Redis storage).
-	//
-	// It names a single standalone server. For a cluster or a Sentinel
-	// deployment use RedisAddrs, which takes precedence over it.
 	RedisAddr string
 
-	// RedisAddrs is a seed list of host:port addresses, for a Redis Cluster
-	// or for the Sentinel nodes of a failover setup. When it is empty,
-	// RedisAddr is used instead.
+	// RedisAddrs is a seed list of host:port addresses: the nodes of a Redis
+	// Cluster, or the Sentinel nodes of a failover setup. It is what lets a
+	// configuration-driven deployment be something other than standalone --
+	// RedisAddr alone can only name one server. When it is empty, RedisAddr
+	// is used; two or more entries with RedisMasterName empty select a
+	// cluster client.
 	RedisAddrs []string
 
 	// RedisMasterName is the Sentinel master name. Setting it selects a
-	// Sentinel-backed failover client, with RedisAddrs (or RedisAddr) read as
-	// the Sentinel addresses rather than as Redis servers.
+	// Sentinel-backed failover client, and RedisAddrs (or RedisAddr) is then
+	// read as the Sentinel addresses rather than as Redis servers.
 	RedisMasterName string
 
+	// RedisPassword is the Redis password (empty if no password). It
+	// authenticates to the Redis server itself -- under Sentinel, that is the
+	// master Sentinel points at, not the Sentinel nodes.
+	RedisPassword string
+
 	// RedisSentinelUsername and RedisSentinelPassword authenticate to the
-	// Sentinel nodes themselves. They are separate from RedisPassword, which
-	// authenticates to the Redis server Sentinel points at -- the two
-	// routinely differ, and a Sentinel deployment with ACLs is unusable
-	// without them.
+	// Sentinel nodes themselves. They are separate from RedisPassword because
+	// the two credentials frequently differ, and a Sentinel deployment with
+	// ACLs cannot be reached without them.
 	RedisSentinelUsername string
 	RedisSentinelPassword string
 
-	// RedisPassword is the Redis password (for Redis storage).
-	RedisPassword string
-
-	// RedisDB is the Redis database number (for Redis storage).
+	// RedisDB is the Redis database number (for Redis storage). Redis Cluster
+	// supports only database 0, so this is ignored there.
 	RedisDB int
 
 	// MemoryGCInterval is the garbage collection interval for memory storage.
@@ -90,22 +92,22 @@ func (c StorageConfig) WithRedisAddr(addr string) StorageConfig {
 	return c
 }
 
-// WithRedisAddrs sets the seed list of cluster or Sentinel addresses. It takes
-// precedence over WithRedisAddr.
+// WithRedisAddrs sets the seed list of cluster or Sentinel addresses. Passing
+// none clears it, which puts the configuration back on RedisAddr.
 func (c StorageConfig) WithRedisAddrs(addrs ...string) StorageConfig {
 	c.RedisAddrs = addrs
 	return c
 }
 
-// WithRedisMasterName sets the Sentinel master name, selecting a failover
-// client.
+// WithRedisMasterName sets the Sentinel master name, selecting a
+// Sentinel-backed failover client.
 func (c StorageConfig) WithRedisMasterName(name string) StorageConfig {
 	c.RedisMasterName = name
 	return c
 }
 
-// WithRedisSentinelAuth sets the credentials used against the Sentinel nodes,
-// which are not the credentials used against the Redis server behind them.
+// WithRedisSentinelAuth sets the credentials for the Sentinel nodes
+// themselves, which are not the ones [StorageConfig.WithRedisPassword] sets.
 func (c StorageConfig) WithRedisSentinelAuth(username, password string) StorageConfig {
 	c.RedisSentinelUsername = username
 	c.RedisSentinelPassword = password
