@@ -1,8 +1,8 @@
-// Package session provides session storage and management functionality.
 package session
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -157,4 +157,42 @@ func normalizeSameSite(value string) string {
 	default:
 		return value
 	}
+}
+
+// SameSiteMode returns the SameSite attribute the session cookie must carry,
+// as a net/http value. An unrecognised or empty Config.SameSite falls back to
+// Lax, which is what [CreateCookie] has always emitted for it. "Disabled"
+// maps to [http.SameSiteDefaultMode], which omits the attribute entirely --
+// the meaning Fiber spells "disabled".
+//
+// Adapters for other frameworks translate this value rather than reading
+// Config.SameSite themselves: a SameSite rule that disagrees with itself
+// across frameworks is a cross-site request forgery hole, not a cosmetic
+// difference.
+func (c Config) SameSiteMode() http.SameSite {
+	switch normalizeSameSite(c.SameSite) {
+	case "Strict":
+		return http.SameSiteStrictMode
+	case "None":
+		return http.SameSiteNoneMode
+	case "Disabled":
+		return http.SameSiteDefaultMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
+// CookieSecure reports whether the session cookie must carry the Secure
+// attribute. It is Config.Secure, except that SameSite=None forces it on:
+// browsers reject a SameSite=None cookie that is not Secure, so honouring
+// Secure=false there would drop the session cookie rather than relax it.
+//
+// [Config.Validate] rejects that combination outright; this keeps a config
+// that was never validated from silently producing a cookie no browser
+// stores. Adapters use this instead of reading Config.Secure directly.
+func (c Config) CookieSecure() bool {
+	if normalizeSameSite(c.SameSite) == "None" {
+		return true
+	}
+	return c.Secure
 }

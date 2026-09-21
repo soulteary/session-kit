@@ -2,73 +2,93 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"maps"
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestRedisStore_CreateGetSetDeleteExists(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
-	ctx := context.Background()
-	store := NewRedisStore(client, "kv:")
-	ttl := 10 * time.Minute
-
-	id, err := store.Create(ctx, map[string]interface{}{"k": "v1"}, ttl)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if id == "" || id[:5] != "sess_" {
-		t.Errorf("expected sess_ prefix, got %q", id)
-	}
-
-	rec, err := store.Get(ctx, id)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if rec == nil {
-		t.Fatal("Get returned nil")
-	}
-	if rec.ID != id || rec.Data["k"] != "v1" {
-		t.Errorf("Get: id=%q data[k]=%v", rec.ID, rec.Data["k"])
-	}
-
-	ok, err := store.Exists(ctx, id)
-	if err != nil || !ok {
-		t.Errorf("Exists: err=%v ok=%v", err, ok)
-	}
-
-	if err := store.Set(ctx, id, map[string]interface{}{"k": "v2"}, ttl); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-	rec2, err := store.Get(ctx, id)
-	if err != nil || rec2 == nil || rec2.Data["k"] != "v2" {
-		t.Errorf("after Set: err=%v rec=%v", err, rec2)
-	}
-
-	if err := store.Delete(ctx, id); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	rec3, err := store.Get(ctx, id)
-	if err != nil || rec3 != nil {
-		t.Errorf("after Delete: err=%v rec=%v", err, rec3)
-	}
-	ok2, _ := store.Exists(ctx, id)
-	if ok2 {
-		t.Error("Exists after Delete should be false")
-	}
+// memoryStore is an in-memory Store, standing in for a real backend. The
+// Redis implementation of the same contract is tested in the redisstore
+// package, against miniredis; what is under test here is KVManager, which
+// knows nothing about Redis.
+type memoryStore struct {
+	mu      sync.Mutex
+	records map[string]*KVSessionRecord
+	nextID  int
 }
 
-func TestKVManager_CreateGetRefresh(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
+func newMemoryStore() *memoryStore {
+	return &memoryStore{records: make(map[string]*KVSessionRecord)}
+}
 
+func (s *memoryStore) Create(ctx context.Context, data map[string]interface{}, ttl time.Duration) (string, error) {
+	s.mu.Lock()
+	s.nextID++
+	id := "sess_" + string(rune('a'+s.nextID%26)) + string(rune('0'+s.nextID%10))
+	s.mu.Unlock()
+
+	if err := s.Set(ctx, id, data, ttl); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s *memoryStore) Get(_ context.Context, id string) (*KVSessionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec, ok := s.records[id]
+	if !ok {
+		return nil, nil
+	}
+	if time.Now().After(rec.ExpiresAt) {
+		delete(s.records, id)
+		return nil, nil
+	}
+
+	clone := *rec
+	clone.Data = maps.Clone(rec.Data)
+	return &clone, nil
+}
+
+func (s *memoryStore) Set(_ context.Context, id string, data map[string]interface{}, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	createdAt := now
+	if existing, ok := s.records[id]; ok {
+		createdAt = existing.CreatedAt
+	}
+	s.records[id] = &KVSessionRecord{
+		ID:        id,
+		Data:      maps.Clone(data),
+		CreatedAt: createdAt,
+		ExpiresAt: now.Add(ttl),
+	}
+	return nil
+}
+
+func (s *memoryStore) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.records, id)
+	return nil
+}
+
+func (s *memoryStore) Exists(ctx context.Context, id string) (bool, error) {
+	rec, err := s.Get(ctx, id)
+	return rec != nil, err
+}
+
+var _ Store = (*memoryStore)(nil)
+
+func TestKVManager_CreateGetRefresh(t *testing.T) {
 	ctx := context.Background()
-	store := NewRedisStore(client, "mgr:")
+	store := newMemoryStore()
 	mgr := NewKVManager(store, 5*time.Minute)
 
 	id, err := mgr.Create(ctx, map[string]interface{}{"x": "y"}, 0)
@@ -94,12 +114,8 @@ func TestKVManager_CreateGetRefresh(t *testing.T) {
 }
 
 func TestKVManager_Set(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
 	ctx := context.Background()
-	store := NewRedisStore(client, "set:")
+	store := newMemoryStore()
 	mgr := NewKVManager(store, 5*time.Minute)
 
 	id, err := mgr.Create(ctx, map[string]interface{}{"a": "1"}, 10*time.Minute)
@@ -129,12 +145,8 @@ func TestKVManager_Set(t *testing.T) {
 }
 
 func TestKVManager_Delete(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
 	ctx := context.Background()
-	store := NewRedisStore(client, "del:")
+	store := newMemoryStore()
 	mgr := NewKVManager(store, 5*time.Minute)
 
 	id, err := mgr.Create(ctx, map[string]interface{}{"k": "v"}, 10*time.Minute)
@@ -157,12 +169,8 @@ func TestKVManager_Delete(t *testing.T) {
 }
 
 func TestKVManager_Exists(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
 	ctx := context.Background()
-	store := NewRedisStore(client, "exists:")
+	store := newMemoryStore()
 	mgr := NewKVManager(store, 5*time.Minute)
 
 	ok, err := mgr.Exists(ctx, "nonexistent")
@@ -181,12 +189,8 @@ func TestKVManager_Exists(t *testing.T) {
 }
 
 func TestKVManager_RefreshNotFound(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
 	ctx := context.Background()
-	store := NewRedisStore(client, "refresh:")
+	store := newMemoryStore()
 	mgr := NewKVManager(store, 5*time.Minute)
 
 	// Refresh on non-existent id: Get returns (nil, nil), so Refresh returns nil (no error)
@@ -197,12 +201,8 @@ func TestKVManager_RefreshNotFound(t *testing.T) {
 }
 
 func TestKVManager_RefreshWithZeroTTL(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
 	ctx := context.Background()
-	store := NewRedisStore(client, "refresh0:")
+	store := newMemoryStore()
 	mgr := NewKVManager(store, 5*time.Minute)
 
 	id, err := mgr.Create(ctx, map[string]interface{}{"k": "v"}, 10*time.Minute)
@@ -216,134 +216,6 @@ func TestKVManager_RefreshWithZeroTTL(t *testing.T) {
 	rec, err := mgr.Get(ctx, id)
 	if err != nil || rec == nil {
 		t.Errorf("after Refresh(0): err=%v rec=%v", err, rec)
-	}
-}
-
-func TestRedisStore_NilClient(t *testing.T) {
-	ctx := context.Background()
-	store := NewRedisStore(nil, "kv:")
-
-	_, err := store.Create(ctx, map[string]interface{}{"k": "v"}, time.Minute)
-	if err == nil {
-		t.Error("expected error for nil client on Create")
-	}
-
-	_, err = store.Get(ctx, "sess_abc")
-	if err == nil {
-		t.Error("expected error for nil client on Get")
-	}
-
-	err = store.Set(ctx, "sess_abc", map[string]interface{}{"k": "v"}, time.Minute)
-	if err == nil {
-		t.Error("expected error for nil client on Set")
-	}
-
-	err = store.Delete(ctx, "sess_abc")
-	if err == nil {
-		t.Error("expected error for nil client on Delete")
-	}
-
-	_, err = store.Exists(ctx, "sess_abc")
-	if err == nil {
-		t.Error("expected error for nil client on Exists")
-	}
-}
-
-func TestRedisStore_GetInvalidJSON(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
-	ctx := context.Background()
-	store := NewRedisStore(client, "bad:")
-	// key = keyPrefix + id => "bad:" + "sess_invalid"
-	if err := client.Set(ctx, "bad:sess_invalid", []byte("not json"), time.Minute).Err(); err != nil {
-		t.Fatalf("set raw value: %v", err)
-	}
-
-	_, err := store.Get(ctx, "sess_invalid")
-	if err == nil {
-		t.Error("expected error for invalid JSON in Get")
-	}
-}
-
-func TestRedisStore_GetExpiredRecord(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
-	ctx := context.Background()
-	store := NewRedisStore(client, "exp:")
-	id := "sess_expired"
-	rec := &KVSessionRecord{
-		ID:        id,
-		Data:      map[string]interface{}{"k": "v"},
-		CreatedAt: time.Now().Add(-2 * time.Hour),
-		ExpiresAt: time.Now().Add(-1 * time.Hour),
-	}
-	data, err := json.Marshal(rec)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	// key = "exp:" + id
-	if err := client.Set(ctx, "exp:"+id, data, time.Minute).Err(); err != nil {
-		t.Fatalf("set expired record: %v", err)
-	}
-
-	got, err := store.Get(ctx, id)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got != nil {
-		t.Error("expected nil for expired record")
-	}
-}
-
-func TestRedisStore_KeyPrefixWithoutColon(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
-	ctx := context.Background()
-	// Prefix without trailing colon: NewRedisStore should append ":"
-	store := NewRedisStore(client, "myprefix")
-	id, err := store.Create(ctx, map[string]interface{}{"a": "b"}, 10*time.Minute)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	rec, err := store.Get(ctx, id)
-	if err != nil || rec == nil || rec.Data["a"] != "b" {
-		t.Errorf("Get after Create: err=%v rec=%v", err, rec)
-	}
-}
-
-func TestRedisStore_EmptyKeyPrefix(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
-	ctx := context.Background()
-	store := NewRedisStore(client, "") // empty prefix: key(id) = id
-
-	id, err := store.Create(ctx, map[string]interface{}{"k": "v"}, 10*time.Minute)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if id == "" || id[:5] != "sess_" {
-		t.Errorf("expected sess_ prefix, got %q", id)
-	}
-
-	rec, err := store.Get(ctx, id)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if rec == nil || rec.Data["k"] != "v" {
-		t.Errorf("Get: rec=%v", rec)
-	}
-
-	ok, err := store.Exists(ctx, id)
-	if err != nil || !ok {
-		t.Errorf("Exists: err=%v ok=%v", err, ok)
 	}
 }
 
@@ -377,12 +249,8 @@ func (f *failingStore) Exists(ctx context.Context, id string) (bool, error) {
 }
 
 func TestKVManager_RefreshGetError(t *testing.T) {
-	mr, client := setupMiniRedis(t)
-	defer mr.Close()
-	defer func() { _ = client.Close() }()
-
 	ctx := context.Background()
-	base := NewRedisStore(client, "refresh-err:")
+	base := newMemoryStore()
 	wrapped := &failingStore{Store: base, getErr: errors.New("get failed")}
 	mgr := NewKVManager(wrapped, 5*time.Minute)
 

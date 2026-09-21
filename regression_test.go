@@ -3,16 +3,9 @@ package session
 import (
 	"bytes"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
 	"testing"
 	"time"
-
-	"github.com/alicebob/miniredis/v2"
-	"github.com/gofiber/fiber/v3"
-	fibersession "github.com/gofiber/fiber/v3/middleware/session"
-	"github.com/redis/go-redis/v9"
 )
 
 // TestStringSliceSurvivesStorageRoundTrip is the regression test for scopes and
@@ -108,292 +101,139 @@ func TestMemoryStorageCloseIsIdempotent(t *testing.T) {
 	}
 }
 
-// --- Codex review follow-ups (PR #4) ---
-
-// TestEmptyValueSetDeletesInEveryBackend is the regression test for the
-// delete-on-empty-value semantics being applied to MemoryStorage only.
-// RedisStorage still ignored an empty value, so code tested against memory
-// appeared to clear old authenticated data and left it readable in production.
-func TestEmptyValueSetDeletesInEveryBackend(t *testing.T) {
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() { _ = client.Close() }()
-
-	backends := map[string]Storage{
-		"memory": NewMemoryStorage("consistency:", 0),
-		"redis":  NewRedisStorage(client, "consistency:"),
-	}
-
-	for name, store := range backends {
-		t.Run(name, func(t *testing.T) {
-			defer func() { _ = store.Close() }()
-
-			if err := store.Set("sid", []byte("authenticated-payload"), time.Minute); err != nil {
-				t.Fatalf("Set() error = %v", err)
-			}
-			got, err := store.Get("sid")
-			if err != nil || string(got) != "authenticated-payload" {
-				t.Fatalf("Get() = (%q, %v), want the stored payload", got, err)
-			}
-
-			// Overwrite with empty data: the old payload must not survive.
-			if err := store.Set("sid", nil, time.Minute); err != nil {
-				t.Fatalf("Set(empty) error = %v", err)
-			}
-			got, err = store.Get("sid")
-			if err != nil {
-				t.Fatalf("Get() after empty Set error = %v", err)
-			}
-			if len(got) != 0 {
-				t.Errorf("Get() = %q after an empty Set; the old authenticated payload is still readable", got)
-			}
-
-			// An empty KEY stays a silent no-op, matching fiber.Storage.
-			if err := store.Set("", []byte("x"), time.Minute); err != nil {
-				t.Errorf("Set(empty key) error = %v, want nil", err)
-			}
-		})
-	}
-}
-
 // --- Session fixation (login must rotate the session id) ---
 
-// deleteFailingStorage is a storage backend whose Delete always fails, standing
-// in for a backend that is unreachable at the moment a login tries to rotate
-// the session ID.
-type deleteFailingStorage struct {
-	Storage
-	err error
+// rotatingSession is a session that can rotate its own ID -- the shape Fiber
+// v3's *middleware/session.Session has. It records the order of the calls it
+// receives, because the order is the fail-closed guarantee: rotation has to be
+// attempted before anything marks the session authenticated.
+type rotatingSession struct {
+	values   map[any]any
+	id       string
+	rotated  int
+	saved    int
+	roterr   error
+	sequence []string
 }
 
-func (s deleteFailingStorage) Delete(string) error { return s.err }
+func newRotatingSession() *rotatingSession {
+	return &rotatingSession{values: map[any]any{}, id: "planted-id"}
+}
+
+func (s *rotatingSession) Get(key any) any { return s.values[key] }
+
+func (s *rotatingSession) Set(key, val any) {
+	s.sequence = append(s.sequence, "set")
+	s.values[key] = val
+}
+
+func (s *rotatingSession) Save() error {
+	s.sequence = append(s.sequence, "save")
+	s.saved++
+	return nil
+}
+
+func (s *rotatingSession) Regenerate() error {
+	s.sequence = append(s.sequence, "regenerate")
+	if s.roterr != nil {
+		return s.roterr
+	}
+	s.rotated++
+	s.id = fmt.Sprintf("rotated-%d", s.rotated)
+	return nil
+}
 
 // TestAuthenticateRotatesSessionID is the regression test for session
 // fixation. Authenticate only wrote the authentication markers and saved, so
 // the session ID survived login: an ID an attacker had planted in the victim's
-// browser before login came out of login authenticated, and the attacker's
-// copy of that ID granted access to the victim's account.
+// browser came back out of login authenticated, and the attacker's copy of it
+// then granted access to the victim's account.
 func TestAuthenticateRotatesSessionID(t *testing.T) {
-	app := fiber.New()
-	storage := NewMemoryStorage("fixation:", 0)
-	defer func() { _ = storage.Close() }()
+	sess := newRotatingSession()
+	SetUserID(sess, "victim-123")
+	sess.sequence = nil // from here on, only what Authenticate itself does
 
-	store := fibersession.NewStore(fibersession.Config{
-		Storage:     fiberStorageAdapter{storage: storage},
-		IdleTimeout: time.Hour,
-	})
-
-	// The attacker obtains a real, stored session ID to plant in the victim's
-	// browser. Fiber only adopts a client-supplied ID that already exists in
-	// storage, which is exactly what this route produces.
-	app.Get("/plant", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-		sess.Set("planted", true)
-		return sess.Save()
-	})
-
-	app.Get("/login", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-		SetUserID(sess, "victim-123")
-		return Authenticate(sess)
-	})
-
-	app.Get("/whoami", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-		if !IsAuthenticated(sess) {
-			return c.SendString("anonymous")
-		}
-		return c.SendString(GetUserID(sess))
-	})
-
-	plantedID := sessionIDFromResponse(t, doRequest(t, app, "/plant", ""))
-	if plantedID == "" {
-		t.Fatal("/plant did not return a session cookie")
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
 	}
 
-	loginResp := doRequest(t, app, "/login", plantedID)
-	rotatedID := sessionIDFromResponse(t, loginResp)
-	if rotatedID == "" {
-		t.Fatal("/login did not return a session cookie")
+	if sess.id == "planted-id" {
+		t.Error("the session id survived login; an id planted before login is now authenticated")
+	}
+	if sess.rotated != 1 {
+		t.Errorf("Regenerate called %d times, want 1", sess.rotated)
+	}
+	if !IsAuthenticated(sess) {
+		t.Error("session is not authenticated after Authenticate")
+	}
+	// Rotation keeps the data written before login.
+	if got := GetUserID(sess); got != "victim-123" {
+		t.Errorf("GetUserID() = %q after rotation, want %q", got, "victim-123")
 	}
 
-	if rotatedID == plantedID {
-		t.Errorf("session id %q survived login; an id planted before login is now authenticated", plantedID)
+	// Rotation must come before anything marks the session authenticated.
+	if len(sess.sequence) == 0 || sess.sequence[0] != "regenerate" {
+		t.Errorf("call sequence = %v, want rotation first", sess.sequence)
 	}
-
-	// The planted id must be gone from storage, not merely unused.
-	data, err := storage.Get(plantedID)
-	if err != nil {
-		t.Fatalf("Get(plantedID) error = %v", err)
-	}
-	if data != nil {
-		t.Errorf("the pre-login session record is still in storage under %q", plantedID)
-	}
-
-	// The attacker's copy of the id must not be authenticated.
-	if body := bodyOf(t, doRequest(t, app, "/whoami", plantedID)); body != "anonymous" {
-		t.Errorf("/whoami with the planted id = %q, want %q", body, "anonymous")
-	}
-
-	// The victim's new id must be authenticated and keep the data written
-	// before Authenticate was called.
-	if body := bodyOf(t, doRequest(t, app, "/whoami", rotatedID)); body != "victim-123" {
-		t.Errorf("/whoami with the rotated id = %q, want %q", body, "victim-123")
+	if sess.sequence[len(sess.sequence)-1] != "save" {
+		t.Errorf("call sequence = %v, want the save last", sess.sequence)
 	}
 }
 
-// TestAuthenticateFailsClosedWhenRotationFails: rotation is attempted before
-// the authentication markers are written, so a storage failure leaves the
-// session unauthenticated instead of authenticated under an id an attacker
-// may already hold.
+// TestAuthenticateFailsClosedWhenRotationFails: a session that could not be
+// rotated must be left unauthenticated, not marked authenticated under an ID
+// an attacker may already hold. Nothing may be written or saved either --
+// Fiber's middleware persists the session when the handler returns, so a
+// marker written before a failed rotation would reach storage under the old
+// ID anyway.
 func TestAuthenticateFailsClosedWhenRotationFails(t *testing.T) {
-	app := fiber.New()
-	backend := NewMemoryStorage("rotate-fail:", 0)
-	defer func() { _ = backend.Close() }()
+	rotationFailed := errors.New("storage unavailable")
+	sess := newRotatingSession()
+	sess.roterr = rotationFailed
 
-	store := fibersession.NewStore(fibersession.Config{
-		Storage: fiberStorageAdapter{storage: deleteFailingStorage{
-			Storage: backend,
-			err:     errors.New("storage unavailable"),
-		}},
-		IdleTimeout: time.Hour,
-	})
-
-	app.Get("/plant", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-		sess.Set("planted", true)
-		return sess.Save()
-	})
-
-	app.Get("/login", func(c fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err != nil {
-			return err
-		}
-		if authErr := Authenticate(sess); authErr == nil {
-			return c.SendString("authenticate succeeded without rotating")
-		}
-		if IsAuthenticated(sess) {
-			return c.SendString("session marked authenticated despite the failure")
-		}
-		return c.SendString("failed closed")
-	})
-
-	plantedID := sessionIDFromResponse(t, doRequest(t, app, "/plant", ""))
-	if plantedID == "" {
-		t.Fatal("/plant did not return a session cookie")
+	err := Authenticate(sess)
+	if err == nil {
+		t.Fatal("Authenticate() = nil, want an error when the id could not be rotated")
 	}
-
-	if body := bodyOf(t, doRequest(t, app, "/login", plantedID)); body != "failed closed" {
-		t.Errorf("/login = %q, want %q", body, "failed closed")
+	if !errors.Is(err, rotationFailed) {
+		t.Errorf("Authenticate() error = %v, want it to wrap %v", err, rotationFailed)
+	}
+	if IsAuthenticated(sess) {
+		t.Error("session was marked authenticated even though rotation failed")
+	}
+	if sess.saved != 0 {
+		t.Errorf("Save called %d times after a failed rotation, want 0", sess.saved)
+	}
+	if want := []string{"regenerate"}; len(sess.sequence) != len(want) || sess.sequence[0] != want[0] {
+		t.Errorf("call sequence = %v, want %v", sess.sequence, want)
 	}
 }
 
-// doRequest issues a GET carrying the given session id, if any.
-func doRequest(t *testing.T, app *fiber.App, path, sessionID string) *http.Response {
-	t.Helper()
+// TestAuthenticateWithoutRotationSupport: rotation is taken up through
+// [Regenerator] rather than required by [Saver], so a session that cannot
+// rotate -- the framework-free memorySession in ExampleAuthenticate, for one
+// -- still authenticates. Requiring it in Saver instead would break every such
+// type that compiles against the released v3 API.
+func TestAuthenticateWithoutRotationSupport(t *testing.T) {
+	sess := &plainSession{values: map[any]any{}}
 
-	req := httptest.NewRequest("GET", path, nil)
-	if sessionID != "" {
-		req.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+	if err := Authenticate(sess); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
 	}
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatalf("GET %s: %v", path, err)
+	if !IsAuthenticated(sess) {
+		t.Error("a session that cannot rotate should still authenticate")
 	}
-	if resp.StatusCode != fiber.StatusOK {
-		t.Fatalf("GET %s: status %d, want 200", path, resp.StatusCode)
-	}
-	return resp
-}
-
-func sessionIDFromResponse(t *testing.T, resp *http.Response) string {
-	t.Helper()
-
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "session_id" {
-			return cookie.Value
-		}
-	}
-	return ""
-}
-
-func bodyOf(t *testing.T, resp *http.Response) string {
-	t.Helper()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("reading body: %v", err)
-	}
-	_ = resp.Body.Close()
-	return string(body)
-}
-
-// TestAuthenticateRotatesSessionIDUnderMiddleware covers the other supported
-// wiring: with session.New + session.FromContext, Save is a deliberate no-op
-// and the middleware persists the session when the handler returns. The
-// rotation has to reach storage and the client cookie on that path too.
-func TestAuthenticateRotatesSessionIDUnderMiddleware(t *testing.T) {
-	app := fiber.New()
-	storage := NewMemoryStorage("fixation-mw:", 0)
-	defer func() { _ = storage.Close() }()
-
-	app.Use(fibersession.New(fibersession.Config{
-		Storage:     fiberStorageAdapter{storage: storage},
-		IdleTimeout: time.Hour,
-	}))
-
-	app.Get("/plant", func(c fiber.Ctx) error {
-		fibersession.FromContext(c).Set("planted", true)
-		return c.SendString("planted")
-	})
-
-	app.Get("/login", func(c fiber.Ctx) error {
-		sess := fibersession.FromContext(c).Session
-		SetUserID(sess, "victim-123")
-		if err := Authenticate(sess); err != nil {
-			return err
-		}
-		return c.SendString("logged in")
-	})
-
-	app.Get("/whoami", func(c fiber.Ctx) error {
-		sess := fibersession.FromContext(c).Session
-		if !IsAuthenticated(sess) {
-			return c.SendString("anonymous")
-		}
-		return c.SendString(GetUserID(sess))
-	})
-
-	plantedID := sessionIDFromResponse(t, doRequest(t, app, "/plant", ""))
-	if plantedID == "" {
-		t.Fatal("/plant did not return a session cookie")
-	}
-
-	rotatedID := sessionIDFromResponse(t, doRequest(t, app, "/login", plantedID))
-	if rotatedID == "" {
-		t.Fatal("/login did not return a session cookie")
-	}
-	if rotatedID == plantedID {
-		t.Errorf("session id %q survived login under the middleware", plantedID)
-	}
-
-	if body := bodyOf(t, doRequest(t, app, "/whoami", plantedID)); body != "anonymous" {
-		t.Errorf("/whoami with the planted id = %q, want %q", body, "anonymous")
-	}
-	if body := bodyOf(t, doRequest(t, app, "/whoami", rotatedID)); body != "victim-123" {
-		t.Errorf("/whoami with the rotated id = %q, want %q", body, "victim-123")
+	if sess.saved != 1 {
+		t.Errorf("Save called %d times, want 1", sess.saved)
 	}
 }
+
+// plainSession satisfies Saver and Reader but cannot rotate.
+type plainSession struct {
+	values map[any]any
+	saved  int
+}
+
+func (s *plainSession) Get(key any) any  { return s.values[key] }
+func (s *plainSession) Set(key, val any) { s.values[key] = val }
+func (s *plainSession) Save() error      { s.saved++; return nil }

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -126,4 +127,69 @@ func TestMustNewStorageSuccess(t *testing.T) {
 	cfg := DefaultStorageConfig().WithType(StorageTypeMemory)
 	storage := MustNewStorage(cfg)
 	defer func() { _ = storage.Close() }()
+}
+
+// Redis lives in the redisstore subpackage now, so a config asking for it
+// without that import must say so rather than fail as an unknown type.
+func TestNewStorageRedisWithoutTheSubpackage(t *testing.T) {
+	cfg := DefaultStorageConfig().WithType(StorageTypeRedis)
+
+	_, err := NewStorage(cfg)
+	if err == nil {
+		t.Fatal("NewStorage() with an unregistered redis backend returned no error")
+	}
+	if !strings.Contains(err.Error(), "redisstore") {
+		t.Errorf("NewStorage() error = %q, want it to name the redisstore subpackage", err)
+	}
+}
+
+func TestNewStorageFromEnvRedisWithoutTheSubpackage(t *testing.T) {
+	_, err := NewStorageFromEnv(true, "localhost:6379", "", 0, "test:")
+	if err == nil {
+		t.Fatal("NewStorageFromEnv(redis) with an unregistered backend returned no error")
+	}
+	if !strings.Contains(err.Error(), "redisstore") {
+		t.Errorf("NewStorageFromEnv() error = %q, want it to name the redisstore subpackage", err)
+	}
+}
+
+func TestRegisterStorage(t *testing.T) {
+	const custom StorageType = "test-backend"
+
+	var gotPrefix string
+	RegisterStorage(custom, func(cfg StorageConfig) (Storage, error) {
+		gotPrefix = cfg.KeyPrefix
+		return NewMemoryStorage(cfg.KeyPrefix, 0), nil
+	})
+
+	storage, err := NewStorage(DefaultStorageConfig().WithType(custom).WithKeyPrefix("custom:"))
+	if err != nil {
+		t.Fatalf("NewStorage() error = %v", err)
+	}
+	defer func() { _ = storage.Close() }()
+
+	if gotPrefix != "custom:" {
+		t.Errorf("the builder saw KeyPrefix %q, want %q", gotPrefix, "custom:")
+	}
+}
+
+func TestRegisterStorageRejectsBadRegistrations(t *testing.T) {
+	build := func(StorageConfig) (Storage, error) { return nil, nil }
+
+	cases := map[string]func(){
+		"empty type":  func() { RegisterStorage("", build) },
+		"nil builder": func() { RegisterStorage("nil-builder", nil) },
+		"duplicate":   func() { RegisterStorage(StorageTypeMemory, build) },
+	}
+
+	for name, register := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("RegisterStorage() did not panic")
+				}
+			}()
+			register()
+		})
+	}
 }
