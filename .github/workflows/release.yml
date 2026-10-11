@@ -100,6 +100,8 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v7
 
+      with:
+        persist-credentials: false
     - name: Set up Go environment
       uses: actions/setup-go@v7
       with:
@@ -174,7 +176,7 @@ jobs:
         import subprocess
         import sys
         import tempfile
-        
+
         # Validate the exact invocation that creates the published files.
         directory = sys.argv[1] if len(sys.argv) > 1 else "."
         output = pathlib.Path(".github") if directory == "." else pathlib.Path(".github/reports") / directory
@@ -228,3 +230,5 @@ jobs:
 
     - name: Run security scan
       run: govulncheck ./...
+    permissions:
+      contents: read
