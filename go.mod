@@ -6,7 +6,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/redis/go-redis/v9 v9.23.0
-	github.com/soulteary/redis-kit v1.7.0
+	github.com/soulteary/redis-kit v1.7.1
 )
 
 require (
