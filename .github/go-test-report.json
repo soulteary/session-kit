@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "tests": {
+    "total": 142,
+    "passed": 142,
+    "failed": 0,
+    "skipped": 0
+  },
+  "coverage": {
+    "covered_statements": 485,
+    "total_statements": 508,
+    "percentage": 95.47,
+    "threshold": 0
+  },
+  "packages": [
+    {
+      "name": ".",
+      "status": "pass",
+      "tests": 80,
+      "failed": 0,
+      "coverage": 97.9
+    },
+    {
+      "name": "fiberadapter",
+      "status": "pass",
+      "tests": 17,
+      "failed": 0,
+      "coverage": 100
+    },
+    {
+      "name": "redisstore",
+      "status": "pass",
+      "tests": 45,
+      "failed": 0,
+      "coverage": 89.74
+    }
+  ],
+  "failures": null
+}
