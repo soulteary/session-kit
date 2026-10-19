@@ -4,17 +4,17 @@ go 1.27.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/gofiber/fiber/v3 v3.5.0
+	github.com/gofiber/fiber/v3 v3.6.1
 	github.com/redis/go-redis/v9 v9.23.0
-	github.com/soulteary/redis-kit v1.7.1
+	github.com/soulteary/redis-kit v1.7.2
 )
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/gofiber/schema v1.8.8 // indirect
-	github.com/gofiber/utils/v2 v2.6.1 // indirect
+	github.com/gofiber/utils/v2 v2.6.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/molecule-man/go-brrr v1.3.0 // indirect
