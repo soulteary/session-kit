@@ -38,7 +38,7 @@ Go 语言会话管理库：存储后端接口与内存实现、服务端会话�
 
 ## 环境要求
 
-- **Go 1.27.2+**（`go.mod` 声明 `go 1.27.2`）
+- **Go 1.27.3+**（`go.mod` 声明 `go 1.27.3`）
 - `github.com/gofiber/fiber/v3` v3.5.0+ —— 仅 `fiberadapter` 需要
 - `github.com/redis/go-redis/v9` —— 仅 `redisstore` 需要
 
