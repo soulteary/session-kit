@@ -10,6 +10,21 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.1.3] — 2026-10-28
+
+### Changed
+
+- Upgrade `redis-kit` from 1.7.3 to 1.8.0. Existing constructors and defaults
+  remain compatible. This dependency refresh does not expose redis-kit's new
+  ACL, TLS or context-aware construction options through session-kit's API.
+- Refresh the Fiber adapter dependency graph: `gofiber/schema` 1.8.8 → 1.9.1,
+  `gofiber/utils/v2` 2.6.2 → 2.6.3, `go-brrr` 1.3.0 → 1.3.1,
+  `fwd` 1.2.0 → 1.2.1, `fasthttp` 1.75.0 → 1.77.0, and
+  `golang.org/x/net` 0.61.0 → 0.62.0.
+- Update report action wrappers and install GTR 1.1.3 and
+  Go Report Card 1.1.4 across CI, report generation and tag verification.
+- Keep Go 1.27.3, the `/v3` module path and the public API unchanged.
+
 ## [3.1.0] — 2026-09-21
 
 ### Added
@@ -303,7 +318,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.1.3...HEAD
+[3.1.3]: https://github.com/soulteary/session-kit/compare/v3.1.2...v3.1.3
 [3.0.1]: https://github.com/soulteary/session-kit/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/soulteary/session-kit/compare/v2.3.0...v3.0.0
 [2.3.0]: https://github.com/soulteary/session-kit/compare/v2.2.0...v2.3.0
