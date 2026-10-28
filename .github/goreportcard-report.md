@@ -11,8 +11,8 @@
 
 | Check | Score |
 | ----- | ----- |
-| go_vet | 100% |
 | gofmt | 100% |
+| go_vet | 100% |
 | gocyclo | 88% |
 | ineffassign | 100% |
 | license | 100% |
@@ -22,13 +22,13 @@
 
 ### gocyclo
 
+- `redisstore/store_test.go`
+  - Line 12: cyclomatic complexity 18 for function TestStore_CreateGetSetDeleteExists
 - `fiberadapter/fiberadapter_test.go`
   - Line 437: cyclomatic complexity 19 for function TestStorageAdapterForwardsEveryMethod
   - Line 33: cyclomatic complexity 18 for function TestSessionHelpersOnFiberSession
 - `session_test.go`
   - Line 370: cyclomatic complexity 18 for function TestSessionHelpers
-- `redisstore/store_test.go`
-  - Line 12: cyclomatic complexity 18 for function TestStore_CreateGetSetDeleteExists
 
 ---
 
