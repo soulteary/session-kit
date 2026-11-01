@@ -10,6 +10,18 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.1.4] — 2026-11-01
+
+### Changed
+
+- Update `redis-kit` from 1.8.0 to 1.8.1 within the existing major version.
+- Update the Fiber adapter's runtime-transitive `gofiber/schema` dependency
+  from 1.9.1 to 1.9.2.
+- Split session, Fiber adapter, and Redis test phases without removing their
+  scenarios or assertions, and regenerate complete Go quality evidence with
+  all six checks at 100% and no issues.
+- Keep Go 1.27.3, the `/v3` module path, and the public API unchanged.
+
 ## [3.1.3] — 2026-10-28
 
 ### Changed
@@ -318,7 +330,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.1.3...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.1.4...HEAD
+[3.1.4]: https://github.com/soulteary/session-kit/compare/v3.1.3...v3.1.4
 [3.1.3]: https://github.com/soulteary/session-kit/compare/v3.1.2...v3.1.3
 [3.0.1]: https://github.com/soulteary/session-kit/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/soulteary/session-kit/compare/v2.3.0...v3.0.0
