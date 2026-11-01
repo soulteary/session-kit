@@ -1,6 +1,7 @@
 package fiberadapter_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,30 +60,8 @@ func TestSessionHelpersOnFiberSession(t *testing.T) {
 			return c.SendString("phone mismatch")
 		}
 
-		session.SetAMR(sess, []string{"pwd"})
-		if amr := session.GetAMR(sess); len(amr) != 1 || amr[0] != "pwd" {
-			return c.SendString("amr mismatch")
-		}
-
-		session.AddAMR(sess, "otp")
-		if !session.HasAMR(sess, "otp") {
-			return c.SendString("should have otp amr")
-		}
-
-		session.AddAMR(sess, "otp") // duplicates are ignored
-		if len(session.GetAMR(sess)) != 2 {
-			return c.SendString("duplicate amr added")
-		}
-
-		session.SetScopes(sess, []string{"read"})
-		if scopes := session.GetScopes(sess); len(scopes) != 1 || scopes[0] != "read" {
-			return c.SendString("scopes mismatch")
-		}
-		if !session.HasScope(sess, "read") {
-			return c.SendString("should have read scope")
-		}
-		if session.HasScope(sess, "write") {
-			return c.SendString("should not have write scope")
+		if failure := checkFiberAuthorizationHelpers(sess); failure != "" {
+			return c.SendString(failure)
 		}
 
 		session.UpdateLastAccess(sess)
@@ -472,25 +451,7 @@ func TestStorageAdapterForwardsEveryMethod(t *testing.T) {
 		t.Errorf("DeleteWithContext() did not reach the backing storage, got %q", got)
 	}
 
-	if err := adapter.Set("reset-me", []byte("v"), time.Minute); err != nil {
-		t.Fatalf("Set() error = %v", err)
-	}
-	if err := adapter.Reset(); err != nil {
-		t.Fatalf("Reset() error = %v", err)
-	}
-	if backing.Len() != 0 {
-		t.Errorf("Reset() left %d entries behind", backing.Len())
-	}
-
-	if err := adapter.Set("reset-me", []byte("v"), time.Minute); err != nil {
-		t.Fatalf("Set() error = %v", err)
-	}
-	if err := adapter.ResetWithContext(ctx); err != nil {
-		t.Fatalf("ResetWithContext() error = %v", err)
-	}
-	if backing.Len() != 0 {
-		t.Errorf("ResetWithContext() left %d entries behind", backing.Len())
-	}
+	checkStorageAdapterReset(t, adapter, backing, ctx)
 
 	if err := adapter.Close(); err != nil {
 		t.Errorf("Close() error = %v", err)
@@ -517,5 +478,59 @@ func assertBody(t *testing.T, resp *http.Response, want string) {
 	n, _ := resp.Body.Read(body)
 	if got := string(body[:n]); got != want {
 		t.Errorf("body = %q, want %q", got, want)
+	}
+}
+
+func checkFiberAuthorizationHelpers(sess *fibersession.Session) string {
+	session.SetAMR(sess, []string{"pwd"})
+	if amr := session.GetAMR(sess); len(amr) != 1 || amr[0] != "pwd" {
+		return "amr mismatch"
+	}
+
+	session.AddAMR(sess, "otp")
+	if !session.HasAMR(sess, "otp") {
+		return "should have otp amr"
+	}
+
+	session.AddAMR(sess, "otp") // duplicates are ignored
+	if len(session.GetAMR(sess)) != 2 {
+		return "duplicate amr added"
+	}
+
+	session.SetScopes(sess, []string{"read"})
+	if scopes := session.GetScopes(sess); len(scopes) != 1 || scopes[0] != "read" {
+		return "scopes mismatch"
+	}
+	if !session.HasScope(sess, "read") {
+		return "should have read scope"
+	}
+	if session.HasScope(sess, "write") {
+		return "should not have write scope"
+	}
+
+	return ""
+}
+
+func checkStorageAdapterReset(t *testing.T, adapter fiber.Storage, backing *session.MemoryStorage, ctx context.Context) {
+	t.Helper()
+
+	if err := adapter.Set("reset-me", []byte("v"), time.Minute); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if err := adapter.Reset(); err != nil {
+		t.Fatalf("Reset() error = %v", err)
+	}
+	if backing.Len() != 0 {
+		t.Errorf("Reset() left %d entries behind", backing.Len())
+	}
+
+	if err := adapter.Set("reset-me", []byte("v"), time.Minute); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if err := adapter.ResetWithContext(ctx); err != nil {
+		t.Fatalf("ResetWithContext() error = %v", err)
+	}
+	if backing.Len() != 0 {
+		t.Errorf("ResetWithContext() left %d entries behind", backing.Len())
 	}
 }

@@ -1,11 +1,11 @@
 # Go Report Card
 
-**Grade: A+** (98.6%)
+**Grade: A+** (100.0%)
 
 | Metric | Value |
 | ------ | ----- |
 | Files | 26 |
-| Issues | 3 |
+| Issues | 0 |
 
 ## Checks
 
@@ -13,22 +13,12 @@
 | ----- | ----- |
 | gofmt | 100% |
 | go_vet | 100% |
-| gocyclo | 88% |
+| gocyclo | 100% |
 | ineffassign | 100% |
 | license | 100% |
 | misspell | 100% |
 
-## Issues
-
-### gocyclo
-
-- `redisstore/store_test.go`
-  - Line 12: cyclomatic complexity 18 for function TestStore_CreateGetSetDeleteExists
-- `fiberadapter/fiberadapter_test.go`
-  - Line 437: cyclomatic complexity 19 for function TestStorageAdapterForwardsEveryMethod
-  - Line 33: cyclomatic complexity 18 for function TestSessionHelpersOnFiberSession
-- `session_test.go`
-  - Line 370: cyclomatic complexity 18 for function TestSessionHelpers
+No issues found. Nice work!
 
 ---
 

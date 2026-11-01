@@ -389,31 +389,7 @@ func TestSessionHelpers(t *testing.T) {
 		t.Errorf("GetPhone() = %q, want %q", got, "+1234567890")
 	}
 
-	SetAMR(sess, []string{"pwd"})
-	if amr := GetAMR(sess); len(amr) != 1 || amr[0] != "pwd" {
-		t.Errorf("GetAMR() = %v, want [pwd]", amr)
-	}
-
-	AddAMR(sess, "otp")
-	if !HasAMR(sess, "otp") {
-		t.Error("HasAMR(otp) = false after AddAMR(otp)")
-	}
-
-	AddAMR(sess, "otp") // duplicates are ignored
-	if amr := GetAMR(sess); len(amr) != 2 {
-		t.Errorf("GetAMR() = %v after a duplicate AddAMR, want two entries", amr)
-	}
-
-	SetScopes(sess, []string{"read"})
-	if scopes := GetScopes(sess); len(scopes) != 1 || scopes[0] != "read" {
-		t.Errorf("GetScopes() = %v, want [read]", scopes)
-	}
-	if !HasScope(sess, "read") {
-		t.Error("HasScope(read) = false")
-	}
-	if HasScope(sess, "write") {
-		t.Error("HasScope(write) = true")
-	}
+	checkAuthorizationHelpers(t, sess)
 
 	UpdateLastAccess(sess)
 	if GetLastAccess(sess).IsZero() {
@@ -736,5 +712,35 @@ func TestUnauthenticateValueSession(t *testing.T) {
 	}
 	if IsAuthenticated(sess) {
 		t.Error("the session is still authenticated after Unauthenticate")
+	}
+}
+
+func checkAuthorizationHelpers(t *testing.T, sess *fakeSession) {
+	t.Helper()
+
+	SetAMR(sess, []string{"pwd"})
+	if amr := GetAMR(sess); len(amr) != 1 || amr[0] != "pwd" {
+		t.Errorf("GetAMR() = %v, want [pwd]", amr)
+	}
+
+	AddAMR(sess, "otp")
+	if !HasAMR(sess, "otp") {
+		t.Error("HasAMR(otp) = false after AddAMR(otp)")
+	}
+
+	AddAMR(sess, "otp") // duplicates are ignored
+	if amr := GetAMR(sess); len(amr) != 2 {
+		t.Errorf("GetAMR() = %v after a duplicate AddAMR, want two entries", amr)
+	}
+
+	SetScopes(sess, []string{"read"})
+	if scopes := GetScopes(sess); len(scopes) != 1 || scopes[0] != "read" {
+		t.Errorf("GetScopes() = %v, want [read]", scopes)
+	}
+	if !HasScope(sess, "read") {
+		t.Error("HasScope(read) = false")
+	}
+	if HasScope(sess, "write") {
+		t.Error("HasScope(write) = true")
 	}
 }

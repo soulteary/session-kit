@@ -50,17 +50,7 @@ func TestStore_CreateGetSetDeleteExists(t *testing.T) {
 		t.Errorf("after Set: err=%v rec=%v", err, rec2)
 	}
 
-	if err := store.Delete(ctx, id); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	rec3, err := store.Get(ctx, id)
-	if err != nil || rec3 != nil {
-		t.Errorf("after Delete: err=%v rec=%v", err, rec3)
-	}
-	ok2, _ := store.Exists(ctx, id)
-	if ok2 {
-		t.Error("Exists after Delete should be false")
-	}
+	checkDeletedSession(t, ctx, store, id)
 }
 
 func TestStore_NilClient(t *testing.T) {
@@ -188,5 +178,21 @@ func TestStore_EmptyKeyPrefix(t *testing.T) {
 	ok, err := store.Exists(ctx, id)
 	if err != nil || !ok {
 		t.Errorf("Exists: err=%v ok=%v", err, ok)
+	}
+}
+
+func checkDeletedSession(t *testing.T, ctx context.Context, store *Store, id string) {
+	t.Helper()
+
+	if err := store.Delete(ctx, id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	rec3, err := store.Get(ctx, id)
+	if err != nil || rec3 != nil {
+		t.Errorf("after Delete: err=%v rec=%v", err, rec3)
+	}
+	ok2, _ := store.Exists(ctx, id)
+	if ok2 {
+		t.Error("Exists after Delete should be false")
 	}
 }
