@@ -572,3 +572,20 @@ go tool cover -html=coverage.out
 ## 许可证
 
 Apache License 2.0 —— 详见 [LICENSE](LICENSE)。
+
+## 支持原子撤销的 Fiber 会话
+
+`fiberadapter.RevocableSessionConfig(manager)` 是可选接口，普通 `SessionConfig`
+行为保持不变。该接口要求 Memory 或 Redis 后端支持原子撤销，并使用独立的新 key
+前缀；启用时已有会话需要重新登录，旧实例不能继续向新前缀写入。
+
+新的随机会话 ID 含有不可变的绝对截止时间，修改截止时间会指向不同的存储记录，
+不能修改现有身份。内存后端在同一把锁内检查撤销标记并写入，Redis 使用单 key Lua
+原子操作。注销标记保留到 ID 截止；标记过期后，旧 ID 的写入仍会被拒绝，不能由
+在途请求重新创建已注销会话。配置的有效期在此模式下是绝对上限，而不是可无限
+续期的空闲时间。应用和 Redis 应保持时钟同步。
+
+新模式不允许批量 `Reset`，需要重置时应切换命名空间，避免清除撤销标记后被旧请求
+恢复。Redis ACL 需允许专用会话 key 空间的 `EVAL`、`GET`、`SET`、`DEL`、`TIME`。
+该功能没有改变旧存储接口的取消语义。用法和迁移细节见英文 README 的
+“Revocable Fiber sessions”。

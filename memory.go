@@ -101,7 +101,9 @@ func (s *MemoryStorage) Get(key string) ([]byte, error) {
 	if entry.isExpired() {
 		// Clean up expired entry
 		s.mu.Lock()
-		delete(s.data, fullKey)
+		if s.data[fullKey] == entry {
+			delete(s.data, fullKey)
+		}
 		s.mu.Unlock()
 		return nil, nil
 	}
