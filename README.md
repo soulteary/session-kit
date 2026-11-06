@@ -607,3 +607,43 @@ go tool cover -html=coverage.out
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
+
+## Revocable Fiber sessions
+
+Ordinary `SessionConfig` retains its existing storage semantics. To prevent an
+in-flight request from recreating a session after logout, opt in to
+`fiberadapter.RevocableSessionConfig` with a memory or Redis `Storage`:
+
+```go
+storage := redisstore.New(redisClient, "app:revocable:v1:")
+manager := session.NewManager(storage, session.DefaultConfig())
+config, err := fiberadapter.RevocableSessionConfig(manager)
+if err != nil {
+    return err
+}
+store := fibersession.NewStore(config)
+```
+
+The adapter generates random identifiers containing an immutable absolute
+expiry. The full identifier is the storage key: changing its expiry selects a
+different, unauthenticated record. The configured expiration is an absolute
+lifetime in this mode; saving or rotating an existing session cannot extend the
+old identifier's lifetime. A successful login still rotates the identifier.
+
+Memory storage checks and writes under one lock. Redis checks and writes through
+a single-key Lua script, so another process cannot save an authenticated snapshot
+after that identifier has been revoked. A tombstone occupies the session's own
+key until its identifier expires. Storage TTLs cannot outlive that deadline, and
+expired identifiers are rejected even after the tombstone is gone. Redis uses
+its server clock inside the atomic operations. Keep application and Redis clocks
+synchronized. The revocation API does not add cancellation to the legacy storage
+interface.
+
+Use a **new storage prefix** and reauthenticate existing sessions when enabling
+this mode. Never allow ordinary `Storage.Set` writers to access its namespace.
+Roll out all instances with the new namespace; an older writer must not share it.
+Stored values use a separate envelope, and legacy or malformed values are not
+accepted as authenticated session data. Bulk `Reset` is disabled in this mode
+because deleting revocation markers would permit a stale writer to recreate an
+identifier; rotate the namespace instead. Redis ACLs must permit `EVAL`, `GET`,
+`SET`, `DEL`, and `TIME` for the dedicated session keyspace.
