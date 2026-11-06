@@ -10,6 +10,15 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+### Fixed
+
+- Allow bounded application-clock differences when a revocable Fiber session is
+  read or saved by another replica. The future-deadline check tolerates the smaller
+  of one second and 1% of the configured lifetime. Existing immutable deadlines,
+  expiration rejection, revocation markers and backend TTL/clock checks are
+  unchanged. Keep application and Redis clocks synchronized; this does not allow
+  arbitrary future identifiers or add an expiration grace period.
+
 ## [3.2.0] — 2026-11-07
 
 ### Added

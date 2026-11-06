@@ -34,9 +34,28 @@ type revocableStorageAdapter struct {
 	lifetime   time.Duration
 }
 
-func (a revocableStorageAdapter) Get(key string) ([]byte, error) {
+// validateDeadline allows bounded issuer clock spread only at the future limit.
+// It never grants a grace period after the identifier's immutable expiry.
+func (a revocableStorageAdapter) validateDeadline(key string, now time.Time) error {
 	deadline, err := session.RevocableSessionDeadline(key)
-	if err != nil || !time.Now().Before(deadline) || deadline.After(time.Now().Add(a.lifetime)) {
+	if err != nil {
+		return err
+	}
+	if !now.Before(deadline) {
+		return session.ErrSessionExpired
+	}
+	allowance := a.lifetime / 100
+	if allowance > time.Second {
+		allowance = time.Second
+	}
+	if deadline.After(now.Add(a.lifetime).Add(allowance)) {
+		return session.ErrSessionEncoding
+	}
+	return nil
+}
+
+func (a revocableStorageAdapter) Get(key string) ([]byte, error) {
+	if err := a.validateDeadline(key, time.Now()); err != nil {
 		return nil, nil
 	}
 	return a.revocation.GetSession(key)
@@ -45,15 +64,8 @@ func (a revocableStorageAdapter) GetWithContext(_ context.Context, key string) (
 	return a.Get(key)
 }
 func (a revocableStorageAdapter) Set(key string, value []byte, expiration time.Duration) error {
-	deadline, err := session.RevocableSessionDeadline(key)
-	if err != nil {
+	if err := a.validateDeadline(key, time.Now()); err != nil {
 		return err
-	}
-	if !time.Now().Before(deadline) {
-		return session.ErrSessionExpired
-	}
-	if deadline.After(time.Now().Add(a.lifetime)) {
-		return session.ErrSessionEncoding
 	}
 	return a.revocation.SetSessionIfActive(key, value, expiration)
 }
