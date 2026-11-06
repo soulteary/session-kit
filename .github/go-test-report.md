@@ -4,17 +4,17 @@
 
 | Metric | Value |
 | --- | --- |
-| Total | 142 |
-| Passed | 142 |
+| Total | 147 |
+| Passed | 147 |
 | Failed | 0 |
 | Skipped | 0 |
-| Coverage | 95.47% |
+| Coverage | 95.77% |
 | Threshold | 0.00% |
 
 ### Packages
 
 | Package | Status | Tests | Failed | Coverage |
 | --- | --- | --- | --- | --- |
-| . | pass | 80 | 0 | 97.90% |
-| fiberadapter | pass | 17 | 0 | 100.00% |
-| redisstore | pass | 45 | 0 | 89.74% |
+| . | pass | 82 | 0 | 97.73% |
+| fiberadapter | pass | 19 | 0 | 95.92% |
+| redisstore | pass | 46 | 0 | 91.71% |

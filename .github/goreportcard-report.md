@@ -1,11 +1,11 @@
 # Go Report Card
 
-**Grade: A+** (100.0%)
+**Grade: A+** (98.9%)
 
 | Metric | Value |
 | ------ | ----- |
-| Files | 26 |
-| Issues | 0 |
+| Files | 33 |
+| Issues | 3 |
 
 ## Checks
 
@@ -13,12 +13,21 @@
 | ----- | ----- |
 | gofmt | 100% |
 | go_vet | 100% |
-| gocyclo | 100% |
+| gocyclo | 90% |
 | ineffassign | 100% |
 | license | 100% |
 | misspell | 100% |
 
-No issues found. Nice work!
+## Issues
+
+### gocyclo
+
+- `redisstore/revocation_test.go`
+  - Line 11: cyclomatic complexity 31 for function TestRedisAtomicRevocationAndDeadline
+- `revocation_test.go`
+  - Line 41: cyclomatic complexity 23 for function TestMemoryRevocationSurvivesDelayedSave
+- `fiberadapter/revocation_test.go`
+  - Line 21: cyclomatic complexity 37 for function TestRevocableFiberLogoutRejectsInflightSave
 
 ---
 
