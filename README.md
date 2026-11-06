@@ -638,8 +638,14 @@ after that identifier has been revoked. A tombstone occupies the session's own
 key until its identifier expires. Storage TTLs cannot outlive that deadline, and
 expired identifiers are rejected even after the tombstone is gone. Redis uses
 its server clock inside the atomic operations. Keep application and Redis clocks
-synchronized. The revocation API does not add cancellation to the legacy storage
-interface.
+synchronized. To tolerate small differences between synchronized application
+clocks, the adapter accepts a future identifier deadline up to the configured
+lifetime plus the smaller of one second and 1% of that lifetime. This allowance
+only applies to the future-deadline upper-bound check. It does not delay expiry,
+change an existing identifier, extend storage TTLs, or change Redis clock checks.
+Identifiers at or past their deadline remain rejected, including after logout
+markers expire. Larger clock differences still require clock correction.
+The revocation API does not add cancellation to the legacy storage interface.
 
 Use a **new storage prefix** and reauthenticate existing sessions when enabling
 this mode. Never allow ordinary `Storage.Set` writers to access its namespace.
