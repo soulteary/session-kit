@@ -10,6 +10,26 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-11-07
+
+### Added
+
+- Optional `RevocationStorage` with atomic memory and Redis implementations,
+  immutable-deadline session IDs, active envelopes, tombstones and typed errors.
+- `fiberadapter.RevocableSessionConfig` opts Fiber sessions into identifier-level
+  revocation and an application-configured absolute lifetime. Ordinary storage
+  and session configuration remain compatible; the module stays `/v3`.
+- Regression coverage for concurrent save/revoke, expiration, malformed records,
+  namespace separation, Fiber logout and Redis mutation failures.
+
+### Migration
+
+- Use a new dedicated prefix, reauthenticate existing sessions, and exclude
+  ordinary writers. Revocable bulk reset is disabled to preserve tombstones.
+- See [v3.2.0 release notes](docs/releases/v3.2.0.md) for Redis ACL requirements,
+  clock assumptions and the boundary between identifier revocation and
+  application-wide authentication policy. No universal 24-hour limit is imposed.
+
 ## [3.1.4] — 2026-11-01
 
 ### Changed
@@ -330,7 +350,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.1.4...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/soulteary/session-kit/compare/v3.1.4...v3.2.0
 [3.1.4]: https://github.com/soulteary/session-kit/compare/v3.1.3...v3.1.4
 [3.1.3]: https://github.com/soulteary/session-kit/compare/v3.1.2...v3.1.3
 [3.0.1]: https://github.com/soulteary/session-kit/compare/v3.0.0...v3.0.1
