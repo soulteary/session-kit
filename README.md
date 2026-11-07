@@ -9,7 +9,7 @@ in-memory implementation, a manager for server-side session records, a generic
 key-value session store, and cookie and session helpers that are not tied to
 any web framework.
 
-Current release: **v3.2.0** — [Release notes and migration](docs/releases/v3.2.0.md).
+Current release: **v3.2.1** — [Release notes and migration](docs/releases/v3.2.1.md).
 
 ## Layout
 

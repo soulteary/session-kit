@@ -10,6 +10,8 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.2.1] — 2026-11-07
+
 ### Fixed
 
 - Allow bounded application-clock differences when a revocable Fiber session is
@@ -359,7 +361,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/soulteary/session-kit/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/soulteary/session-kit/compare/v3.1.4...v3.2.0
 [3.1.4]: https://github.com/soulteary/session-kit/compare/v3.1.3...v3.1.4
 [3.1.3]: https://github.com/soulteary/session-kit/compare/v3.1.2...v3.1.3
