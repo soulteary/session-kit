@@ -433,13 +433,16 @@ if err := manager.TouchSession(record); err != nil {
 ### Logout
 
 `Unauthenticate` clears the identity keys, destroys the session, and persists
-the cleared state only if the destroy fails — so a failed `Destroy` still
-leaves a de-authenticated session rather than a fully authenticated one:
+the cleared state only if the destroy fails. Persistent logout is established
+when `Destroy` succeeds or that fallback `Save` succeeds. If both fail, the
+returned error reports both failures; do not assume stored authentication was
+removed. This legacy interface does not replace the optional atomic revocation
+mode described below:
 
 ```go
 if err := session.Unauthenticate(sess); err != nil {
-    // The session is no longer authenticated even if Destroy failed —
-    // the cleared state was persisted as the fallback.
+    // Handle the failure: if Destroy and fallback Save both failed,
+    // stored authentication may remain. Do not report a confirmed logout.
     log.Printf("logout: %v", err)
 }
 ```

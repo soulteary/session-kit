@@ -411,13 +411,14 @@ if err := manager.TouchSession(record); err != nil {
 ### 登出
 
 `Unauthenticate` 先清除身份相关的键、销毁会话，只有在销毁失败时才把清除后的
-状态落盘——这样即便 `Destroy` 失败，留下的也是一个已退出登录的会话，而不是
-一个仍然完整认证的会话：
+状态落盘。只有 `Destroy` 或兜底 `Save` 成功时，才能确认注销已持久化。两者都失败
+时，返回错误会报告双重失败，不能假定存储中的认证已清除。旧 `Session` 接口本身
+不代替下文可选的原子撤销模式：
 
 ```go
 if err := session.Unauthenticate(sess); err != nil {
-    // 即使 Destroy 失败，该会话也已不再是已认证状态——
-    // 清除后的状态已作为兜底被持久化。
+    // 处理失败：若 Destroy 和兜底 Save 都失败，存储中的认证可能仍存在。
+    // 此时不能把注销报告为已确认完成。
     log.Printf("logout: %v", err)
 }
 ```
