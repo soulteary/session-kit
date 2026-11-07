@@ -220,12 +220,11 @@ func Authenticate(session Saver) error {
 
 // Unauthenticate destroys a session.
 //
-// The identity keys are cleared and then persisted BEFORE Destroy is
-// attempted, so that a failing Destroy leaves a de-authenticated session
-// rather than a fully authenticated one. Previously the clearing happened only
-// in memory -- Save was never called -- so the "in case Destroy fails" comment
-// described a safeguard that did not exist: if Destroy failed, the stored
-// session was untouched and still authenticated.
+// Identity keys are cleared locally before Destroy is attempted. If Destroy
+// fails, Save persists the cleared state as a fallback. If both operations fail,
+// the returned error reports both failures; persisted deauthentication cannot
+// be guaranteed. This legacy Session interface does not itself provide atomic
+// revocation of concurrent writers.
 //
 // This function handles nil session gracefully.
 func Unauthenticate(session Session) error {
@@ -249,8 +248,8 @@ func Unauthenticate(session Session) error {
 	// preceding Save a write of data that is about to be deleted -- a wasted
 	// round trip against Redis, and a window in which the cleared session is
 	// persisted under the id being removed. Saving only when Destroy fails
-	// keeps the safeguard the comment above describes: a failed destroy still
-	// leaves a de-authenticated session rather than an authenticated one.
+	// preserves cleared state when the fallback Save succeeds. A double failure
+	// is reported to the caller and cannot guarantee a persistent logout.
 	destroyErr := session.Destroy()
 	if destroyErr == nil {
 		return nil
