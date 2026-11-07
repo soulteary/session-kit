@@ -7,7 +7,7 @@
 Go 语言会话管理库：存储后端接口与内存实现、服务端会话记录的管理器、通用
 键值会话存储，以及一组不绑定任何 Web 框架的 Cookie 与会话辅助函数。
 
-Current release: **v3.2.0** — [版本说明与迁移要求](docs/releases/v3.2.0.md).
+Current release: **v3.2.1** — [版本说明与迁移要求](docs/releases/v3.2.1.md).
 
 ## 包结构
 
