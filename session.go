@@ -135,7 +135,7 @@ func (m *Manager) SaveSession(session *SessionData) error {
 		// Falling back to a full expiration period here resurrected an already
 		// expired session: saving it granted it another complete lifetime, so
 		// a session that kept being written never actually expired. Refuse
-		// instead; use TouchSession to extend a live session deliberately.
+		// instead; use TouchSession for explicit renewal when the caller permits it.
 		return fmt.Errorf("refusing to save expired session %q (expired at %s)", session.ID, session.ExpiresAt)
 	}
 
@@ -170,7 +170,9 @@ func (m *Manager) DeleteSession(id string) error {
 	return m.storage.Delete(id)
 }
 
-// TouchSession updates the last access time and extends expiration.
+// TouchSession updates the last access time and replaces expiration before saving.
+// It does not first check storage existence or the record's previous expiry.
+// Callers decide whether renewal is allowed; this is not a session-validity check.
 func (m *Manager) TouchSession(session *SessionData) error {
 	session.Touch()
 	session.ExpiresAt = time.Now().Add(m.config.Expiration)

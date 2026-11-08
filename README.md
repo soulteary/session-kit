@@ -421,12 +421,14 @@ record.Touch()  // Update last access time
 `SaveSession` **refuses an already-expired session**. Writing one used to grant it
 another full lifetime, so a session that kept being written never expired.
 
-`TouchSession` is the deliberate way to extend a session. It takes the record,
-not an ID:
+`TouchSession` explicitly renews the supplied record, not an ID. It replaces
+the record's expiry before saving and does not first check whether the stored
+record still exists or whether the supplied record was expired. Decide whether
+renewal is allowed before calling it; it is not a session-validity check:
 
 ```go
 if err := manager.TouchSession(record); err != nil {
-    // the session is gone or expired; re-authenticate
+    // handle the failed renewal/save
 }
 ```
 
