@@ -594,11 +594,12 @@ func TestManagerSaveSessionRefusesExpired(t *testing.T) {
 		t.Error("the expired session was written to storage")
 	}
 
-	// Extending a live session deliberately still works.
+	// Saving a live session still works.
 	live := manager.CreateSession("session-456")
 	if err := manager.SaveSession(live); err != nil {
 		t.Fatalf("SaveSession() on a live session error = %v", err)
 	}
+	// Explicit renewal of the supplied expired record also remains supported.
 	if err := manager.TouchSession(session); err != nil {
 		t.Fatalf("TouchSession() should renew an expired session, got %v", err)
 	}
