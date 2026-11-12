@@ -40,7 +40,7 @@ Current release: **v3.2.1** — [版本说明与迁移要求](docs/releases/v3.2
 
 ## 环境要求
 
-- **Go 1.27.3+**（`go.mod` 声明 `go 1.27.3`）
+- **Go 1.27.4+**（`go.mod` 声明 `go 1.27.4`）
 - `github.com/gofiber/fiber/v3` v3.5.0+ —— 仅 `fiberadapter` 需要
 - `github.com/redis/go-redis/v9` —— 仅 `redisstore` 需要
 

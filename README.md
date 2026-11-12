@@ -46,7 +46,7 @@ with **no** `// indirect` requirement left in the consumer's own `go.mod`. See
 
 ## Requirements
 
-- **Go 1.27.3+** (`go.mod` declares `go 1.27.3`)
+- **Go 1.27.4+** (`go.mod` declares `go 1.27.4`)
 - `github.com/gofiber/fiber/v3` v3.5.0+ — only for `fiberadapter`
 - `github.com/redis/go-redis/v9` — only for `redisstore`
 
