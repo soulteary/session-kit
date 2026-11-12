@@ -10,6 +10,31 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.2.2] — 2026-11-13
+
+### Fixed
+
+- `fiberadapter` works with Fiber v3.7.0. From that release the session
+  middleware stores a session under `session:` followed by the session ID
+  instead of the bare ID. `Storage` and the storage used by
+  `RevocableSessionConfig` now remove that prefix, so the backend stays keyed
+  by the session ID: sessions written before the upgrade remain readable, a
+  `Manager` on the same backend sees the same entries, and a revocable
+  identifier's deadline is parsed as before. Without this, revocable sessions
+  failed to save and ordinary sessions were stored under a key the `Manager`
+  did not use.
+
+### Changed
+
+- Require Go 1.27.4, which carries security fixes to cgo, the go command, the
+  compiler, the linker and `net/http`.
+- Select `redis-kit` v1.8.2.
+- `github.com/gofiber/fiber/v3` v3.7.0 is the minimum for `fiberadapter`.
+- With Fiber v3.7.0, saving a session that a request in the same process has
+  already destroyed returns nil and stores nothing; Fiber drops the save
+  before it reaches the storage. A revocation made by another process is still
+  reported as `ErrSessionRevoked`.
+
 ## [3.2.1] — 2026-11-07
 
 ### Fixed
@@ -361,7 +386,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.2...HEAD
+[3.2.2]: https://github.com/soulteary/session-kit/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/soulteary/session-kit/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/soulteary/session-kit/compare/v3.1.4...v3.2.0
 [3.1.4]: https://github.com/soulteary/session-kit/compare/v3.1.3...v3.1.4

@@ -31,6 +31,7 @@ package fiberadapter
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -40,8 +41,23 @@ import (
 	session "github.com/soulteary/session-kit/v3"
 )
 
+// fiberKeyPrefix is what Fiber's session middleware puts in front of the
+// session ID to form its storage key, since v3.7.0.
+const fiberKeyPrefix = "session:"
+
+// sessionID turns a storage key from Fiber's session middleware back into the
+// session ID. The storage behind the adapters is keyed by that ID: it is what
+// the Manager reads and writes, what a revocable identifier's deadline is
+// parsed from, and what sessions stored before Fiber v3.7.0 are filed under.
+// The backend's own key prefix already keeps sessions apart from other data.
+func sessionID(key string) string {
+	return strings.TrimPrefix(key, fiberKeyPrefix)
+}
+
 // Storage adapts a session.Storage to fiber.Storage, which additionally
-// requires context-aware methods.
+// requires context-aware methods. Keys arrive as Fiber's session middleware
+// builds them and are stored under the bare session ID; the adapter is meant
+// for that middleware, not as a general-purpose fiber.Storage.
 //
 // The context is accepted and discarded: session.Storage has no context in its
 // contract, and the backends behind it -- memory, and Redis on
@@ -59,27 +75,27 @@ type storageAdapter struct {
 var _ fiber.Storage = storageAdapter{}
 
 func (a storageAdapter) Get(key string) ([]byte, error) {
-	return a.storage.Get(key)
+	return a.storage.Get(sessionID(key))
 }
 
 func (a storageAdapter) GetWithContext(_ context.Context, key string) ([]byte, error) {
-	return a.storage.Get(key)
+	return a.storage.Get(sessionID(key))
 }
 
 func (a storageAdapter) Set(key string, value []byte, expiration time.Duration) error {
-	return a.storage.Set(key, value, expiration)
+	return a.storage.Set(sessionID(key), value, expiration)
 }
 
 func (a storageAdapter) SetWithContext(_ context.Context, key string, value []byte, expiration time.Duration) error {
-	return a.storage.Set(key, value, expiration)
+	return a.storage.Set(sessionID(key), value, expiration)
 }
 
 func (a storageAdapter) Delete(key string) error {
-	return a.storage.Delete(key)
+	return a.storage.Delete(sessionID(key))
 }
 
 func (a storageAdapter) DeleteWithContext(_ context.Context, key string) error {
-	return a.storage.Delete(key)
+	return a.storage.Delete(sessionID(key))
 }
 
 func (a storageAdapter) Reset() error {

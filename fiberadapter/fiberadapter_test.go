@@ -534,3 +534,27 @@ func checkStorageAdapterReset(t *testing.T, adapter fiber.Storage, backing *sess
 		t.Errorf("ResetWithContext() left %d entries behind", backing.Len())
 	}
 }
+
+// Fiber's session middleware prefixes its storage keys from v3.7.0 on. The
+// adapter stores under the bare session ID either way.
+func TestStorageAdapterStoresUnderTheSessionID(t *testing.T) {
+	backing := session.NewMemoryStorage("keys:", 0)
+	defer func() { _ = backing.Close() }()
+	adapter := fiberadapter.Storage(backing)
+
+	if err := adapter.Set("session:abc", []byte("v"), time.Minute); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if raw, err := backing.Get("abc"); err != nil || string(raw) != "v" {
+		t.Fatalf("backing.Get(\"abc\") = %q, %v", raw, err)
+	}
+	if raw, err := adapter.Get("session:abc"); err != nil || string(raw) != "v" {
+		t.Fatalf("adapter.Get() = %q, %v", raw, err)
+	}
+	if err := adapter.Delete("session:abc"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if raw, _ := backing.Get("abc"); raw != nil {
+		t.Fatalf("Delete() left %q behind", raw)
+	}
+}

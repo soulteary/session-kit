@@ -9,7 +9,7 @@ in-memory implementation, a manager for server-side session records, a generic
 key-value session store, and cookie and session helpers that are not tied to
 any web framework.
 
-Current release: **v3.2.1** — [Release notes and migration](docs/releases/v3.2.1.md).
+Current release: **v3.2.2** — [Release notes and migration](docs/releases/v3.2.2.md).
 
 ## Layout
 
@@ -47,7 +47,7 @@ with **no** `// indirect` requirement left in the consumer's own `go.mod`. See
 ## Requirements
 
 - **Go 1.27.4+** (`go.mod` declares `go 1.27.4`)
-- `github.com/gofiber/fiber/v3` v3.5.0+ — only for `fiberadapter`
+- `github.com/gofiber/fiber/v3` v3.7.0+ — only for `fiberadapter`
 - `github.com/redis/go-redis/v9` — only for `redisstore`
 
 This v3 module line targets Fiber v3. Applications still on Fiber v2 should

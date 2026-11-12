@@ -7,7 +7,7 @@
 Go 语言会话管理库：存储后端接口与内存实现、服务端会话记录的管理器、通用
 键值会话存储，以及一组不绑定任何 Web 框架的 Cookie 与会话辅助函数。
 
-Current release: **v3.2.1** — [版本说明与迁移要求](docs/releases/v3.2.1.md).
+Current release: **v3.2.2** — [版本说明与迁移要求](docs/releases/v3.2.2.md).
 
 ## 包结构
 
@@ -41,7 +41,7 @@ Current release: **v3.2.1** — [版本说明与迁移要求](docs/releases/v3.2
 ## 环境要求
 
 - **Go 1.27.4+**（`go.mod` 声明 `go 1.27.4`）
-- `github.com/gofiber/fiber/v3` v3.5.0+ —— 仅 `fiberadapter` 需要
+- `github.com/gofiber/fiber/v3` v3.7.0+ —— 仅 `fiberadapter` 需要
 - `github.com/redis/go-redis/v9` —— 仅 `redisstore` 需要
 
 v3 模块线面向 Fiber v3。仍在 Fiber v2 上的应用请继续使用

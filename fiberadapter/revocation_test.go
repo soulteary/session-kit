@@ -2,6 +2,7 @@ package fiberadapter_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -116,8 +117,8 @@ func TestRevocableFiberLogoutRejectsInflightSave(t *testing.T) {
 				response, err := app.Test(request("GET", "/hold"))
 				if err == nil {
 					_ = response.Body.Close()
-					if response.StatusCode != 409 {
-						err = errors.New("stale save succeeded")
+					if response.StatusCode != 200 && response.StatusCode != 409 {
+						err = fmt.Errorf("hold %d", response.StatusCode)
 					}
 				}
 				held <- err
@@ -144,7 +145,11 @@ func TestRevocableFiberLogoutRejectsInflightSave(t *testing.T) {
 			if err := <-held; err != nil {
 				t.Fatal(err)
 			}
-			if err := <-saveResult; !errors.Is(err, session.ErrSessionRevoked) {
+			// The logout ran in this process. Fiber v3.7.0 notices that itself and
+			// drops the save without calling the storage, so Save returns nil;
+			// otherwise the storage refuses the write. Either way nothing is
+			// stored, which the /check request below verifies.
+			if err := <-saveResult; err != nil && !errors.Is(err, session.ErrSessionRevoked) {
 				t.Fatalf("unexpected save result: %v", err)
 			}
 			response, err = app.Test(request("GET", "/check"))
@@ -196,3 +201,70 @@ func TestRevocableConfigRejectsUnsupportedStorageAndUnboundedLifetime(t *testing
 }
 
 type ordinaryStorage struct{ session.Storage }
+
+// A revocation made by another replica reaches this process only through the
+// storage, which must refuse the stale save.
+func TestRevocableFiberSaveAfterPeerRevocationFails(t *testing.T) {
+	storage := session.NewMemoryStorage("revocable:", 0)
+	t.Cleanup(func() { _ = storage.Close() })
+	settings := session.DefaultConfig().WithCookieName("revocable_id").WithExpiration(time.Hour)
+	config, err := fiberadapter.RevocableSessionConfig(session.NewManager(storage, settings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := fibersession.NewStore(config)
+	app := fiber.New()
+	app.Get("/seed", func(c fiber.Ctx) error {
+		sess, err := store.Get(c)
+		if err != nil {
+			return err
+		}
+		defer sess.Release()
+		sess.Set(session.KeyUserID, "user-1")
+		if err := sess.Save(); err != nil {
+			return err
+		}
+		return c.SendString(sess.ID())
+	})
+	var saveErr error
+	var id string
+	app.Get("/save", func(c fiber.Ctx) error {
+		sess, err := store.Get(c)
+		if err != nil {
+			return err
+		}
+		defer sess.Release()
+		if err := storage.RevokeSession(id); err != nil {
+			return err
+		}
+		sess.Set("role", "viewer")
+		saveErr = sess.Save()
+		return c.SendStatus(200)
+	})
+	response, err := app.Test(httptest.NewRequest("GET", "http://example.com/seed", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("seed %d %v", response.StatusCode, err)
+	}
+	id = string(raw)
+	request := httptest.NewRequest("GET", "http://example.com/save", nil)
+	request.AddCookie(&http.Cookie{Name: "revocable_id", Value: id})
+	response, err = app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != 200 {
+		t.Fatalf("save %d", response.StatusCode)
+	}
+	if !errors.Is(saveErr, session.ErrSessionRevoked) {
+		t.Fatalf("save after peer revocation: %v", saveErr)
+	}
+	if payload, err := storage.GetSession(id); err != nil || payload != nil {
+		t.Fatalf("revoked session readable: %q %v", payload, err)
+	}
+}
