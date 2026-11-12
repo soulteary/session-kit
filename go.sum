@@ -32,8 +32,8 @@ github.com/redis/go-redis/v9 v9.23.0 h1:/TTVdJa8BRNsybwwGGnmiYktHNlUXtbOQxlWpHBP
 github.com/redis/go-redis/v9 v9.23.0/go.mod h1:EWP2UUk+XDaI1s5nQB5mablZN6vccXlmBQTyfnF87D0=
 github.com/shamaton/msgpack/v3 v3.2.7 h1:YuVYjZq5+NLIREdW52txCmEfVGIi4ithcdhOJhAmU5A=
 github.com/shamaton/msgpack/v3 v3.2.7/go.mod h1:sgBYvEiyz8JR1NC3yGRoPVME9xXovpnh3l/plW1nfRo=
-github.com/soulteary/redis-kit v1.8.1 h1:9BCtZNqH3N4CO38ZNMCrvBxTlKAjOFqcLvh7gK5UHHo=
-github.com/soulteary/redis-kit v1.8.1/go.mod h1:k/lvXA9ecjKhSvNJrGlQ7K0ijp727OYfecG1Mxadv5A=
+github.com/soulteary/redis-kit v1.8.2 h1:8u64849ADw3IqxGzu4D/F9Pw7GG2AqXG11j0HUpqkAY=
+github.com/soulteary/redis-kit v1.8.2/go.mod h1:suVJlfgQtEN+f7AZ3UsXmXuh4YVs6BUSTxyFd6Oj+W8=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/tinylib/msgp v1.6.5 h1:iAH6XTP7BpzErjBZlujJQXxA+GmRi2YWs6M4KdLtNbE=
