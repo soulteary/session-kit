@@ -23,7 +23,7 @@
 ### gocyclo
 
 - `fiberadapter/revocation_test.go`
-  - Line 21: cyclomatic complexity 37 for function TestRevocableFiberLogoutRejectsInflightSave
+  - Line 22: cyclomatic complexity 39 for function TestRevocableFiberLogoutRejectsInflightSave
 - `redisstore/revocation_test.go`
   - Line 11: cyclomatic complexity 31 for function TestRedisAtomicRevocationAndDeadline
 - `fiberadapter/clock_skew_integration_test.go`
