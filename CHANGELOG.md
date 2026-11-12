@@ -10,6 +10,26 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+### Fixed
+
+- `fiberadapter` works with Fiber v3.7.0. From that release the session
+  middleware stores a session under `session:` followed by the session ID
+  instead of the bare ID. `Storage` and the storage used by
+  `RevocableSessionConfig` now remove that prefix, so the backend stays keyed
+  by the session ID: sessions written before the upgrade remain readable, a
+  `Manager` on the same backend sees the same entries, and a revocable
+  identifier's deadline is parsed as before. Without this, revocable sessions
+  failed to save and ordinary sessions were stored under a key the `Manager`
+  did not use.
+
+### Changed
+
+- `github.com/gofiber/fiber/v3` v3.7.0 is the minimum for `fiberadapter`.
+- With Fiber v3.7.0, saving a session that a request in the same process has
+  already destroyed returns nil and stores nothing; Fiber drops the save
+  before it reaches the storage. A revocation made by another process is still
+  reported as `ErrSessionRevoked`.
+
 ## [3.2.1] — 2026-11-07
 
 ### Fixed

@@ -55,6 +55,7 @@ func (a revocableStorageAdapter) validateDeadline(key string, now time.Time) err
 }
 
 func (a revocableStorageAdapter) Get(key string) ([]byte, error) {
+	key = sessionID(key)
 	if err := a.validateDeadline(key, time.Now()); err != nil {
 		return nil, nil
 	}
@@ -64,6 +65,7 @@ func (a revocableStorageAdapter) GetWithContext(_ context.Context, key string) (
 	return a.Get(key)
 }
 func (a revocableStorageAdapter) Set(key string, value []byte, expiration time.Duration) error {
+	key = sessionID(key)
 	if err := a.validateDeadline(key, time.Now()); err != nil {
 		return err
 	}
@@ -72,7 +74,9 @@ func (a revocableStorageAdapter) Set(key string, value []byte, expiration time.D
 func (a revocableStorageAdapter) SetWithContext(_ context.Context, key string, value []byte, expiration time.Duration) error {
 	return a.Set(key, value, expiration)
 }
-func (a revocableStorageAdapter) Delete(key string) error { return a.revocation.RevokeSession(key) }
+func (a revocableStorageAdapter) Delete(key string) error {
+	return a.revocation.RevokeSession(sessionID(key))
+}
 func (a revocableStorageAdapter) DeleteWithContext(_ context.Context, key string) error {
 	return a.Delete(key)
 }
