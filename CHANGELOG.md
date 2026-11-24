@@ -10,6 +10,16 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.2.4] — 2026-11-25
+
+### Changed
+
+- Update `github.com/redis/go-redis/v9` from v9.23.0 to v9.24.0.
+- Select `redis-kit` v1.8.4 for the optional Redis backend.
+- Use the supported Redis scan iterator when resetting a storage namespace.
+- Document the upstream retry, timeout and connection-pool behavior changes
+  in the [release notes](docs/releases/v3.2.4.md).
+
 ## [3.2.3] — 2026-11-24
 
 ### Changed
@@ -401,7 +411,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.3...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.4...HEAD
+[3.2.4]: https://github.com/soulteary/session-kit/compare/v3.2.3...v3.2.4
 [3.2.3]: https://github.com/soulteary/session-kit/compare/v3.2.2...v3.2.3
 [3.2.2]: https://github.com/soulteary/session-kit/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/soulteary/session-kit/compare/v3.2.0...v3.2.1
