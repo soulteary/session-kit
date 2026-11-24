@@ -322,8 +322,8 @@ func (s *Storage) Reset() error {
 	iter := s.client.Scan(ctx, 0, pattern, 0).Iterator()
 
 	var keys []string
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
+	for key := range iter.Vals(ctx) {
+		keys = append(keys, key)
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("failed to scan keys: %w", err)

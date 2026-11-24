@@ -16,6 +16,7 @@ also changes the module path. The current one is
 
 - Update `github.com/redis/go-redis/v9` from v9.23.0 to v9.24.0.
 - Select `redis-kit` v1.8.4 for the optional Redis backend.
+- Use the supported Redis scan iterator when resetting a storage namespace.
 - Document the upstream retry, timeout and connection-pool behavior changes
   in the [release notes](docs/releases/v3.2.4.md).
 
