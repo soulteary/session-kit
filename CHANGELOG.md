@@ -10,6 +10,21 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.2.3] — 2026-11-24
+
+### Changed
+
+- Select `redis-kit` v1.8.3 for the optional Redis backend.
+- Refresh the Fiber adapter's indirect dependencies: `gofiber/schema`
+  v1.9.3 → v1.10.0, `gofiber/utils/v2` v2.6.4 → v2.6.5,
+  `klauspost/compress` v1.20.3 → v1.20.5, `fasthttp` v1.78.0 → v1.80.0,
+  `golang.org/x/crypto` v0.58.0 → v0.59.0, `x/net` v0.62.0 → v0.63.0,
+  `x/sys` v0.49.0 → v0.50.0, and `x/text` v0.43.0 → v0.44.0.
+- Refresh the `golang.org/x/tools` checksums from v0.51.0 to v0.52.0 for
+  transitive dependency tests.
+- Keep Go 1.27.4, Fiber v3.7.0, the `/v3` module path, and the public API.
+  No library source or stored-session format changes are included.
+
 ## [3.2.2] — 2026-11-13
 
 ### Fixed
@@ -386,7 +401,8 @@ also changes the module path. The current one is
   `RedisStorage` was given the same behaviour so the two backends agree.
 - `MemoryStorage.Close` is idempotent. A second call panicked.
 
-[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.2...HEAD
+[Unreleased]: https://github.com/soulteary/session-kit/compare/v3.2.3...HEAD
+[3.2.3]: https://github.com/soulteary/session-kit/compare/v3.2.2...v3.2.3
 [3.2.2]: https://github.com/soulteary/session-kit/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/soulteary/session-kit/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/soulteary/session-kit/compare/v3.1.4...v3.2.0
